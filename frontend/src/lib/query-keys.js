@@ -1,0 +1,15 @@
+export const queryKeys = {
+  conversations: ['conversations'],
+  conversation: (id) => ['conversation', id],
+  messages: (id) => ['messages', id],
+  receipts: (id) => ['receipts', id],
+  directory: (params) => ['directory', params],
+  groups: ['groups'],
+  group: (id) => ['group', id],
+  sessions: ['sessions'],
+  devices: ['devices'],
+  me: ['me'],
+  adminUsers: (params) => ['admin-users', params],
+  adminUser: (id) => ['admin-user', id],
+  adminAudit: (params) => ['admin-audit', params],
+}

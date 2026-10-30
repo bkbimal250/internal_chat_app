@@ -1,0 +1,150 @@
+import { createHash, randomBytes } from 'node:crypto';
+import {
+  CreateBucketCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadBucketCommand,
+  HeadObjectCommand,
+  PutBucketCorsCommand,
+  PutObjectCommand,
+  S3Client,
+  CopyObjectCommand,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { AppError } from '../utils/app-error.js';
+
+export function createStorageKey() {
+  const now = new Date();
+  const stamp = `${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+  return `att/${stamp}/${randomBytes(32).toString('hex')}`;
+}
+
+export function objectStorage(config, logger) {
+  const enabled = Boolean(config.s3Endpoint && config.s3AccessKey && config.s3SecretKey);
+  const shared = {
+    region: config.s3Region,
+    forcePathStyle: config.s3ForcePathStyle,
+    credentials: enabled
+      ? { accessKeyId: config.s3AccessKey, secretAccessKey: config.s3SecretKey }
+      : undefined,
+  };
+  const internal = enabled
+    ? new S3Client({ ...shared, endpoint: config.s3Endpoint })
+    : null;
+  const publicClient = enabled
+    ? new S3Client({ ...shared, endpoint: config.s3PublicEndpoint || config.s3Endpoint })
+    : null;
+  const bucket = config.s3Bucket;
+  const requireEnabled = () => {
+    if (!enabled) throw new AppError('File storage is unavailable', 503, 'STORAGE_UNAVAILABLE');
+  };
+
+  return {
+    enabled,
+    async ready() {
+      if (!enabled) return 'unconfigured';
+      try {
+        await internal.send(new HeadBucketCommand({ Bucket: bucket }));
+        return 'connected';
+      } catch {
+        return 'disconnected';
+      }
+    },
+    async ensureBucket() {
+      if (!enabled) return;
+      try {
+        await internal.send(new HeadBucketCommand({ Bucket: bucket }));
+      } catch {
+        await internal.send(new CreateBucketCommand({ Bucket: bucket }));
+      }
+      const origins = config.corsOrigins.length ? config.corsOrigins : ['http://127.0.0.1:5173'];
+      await internal.send(
+        new PutBucketCorsCommand({
+          Bucket: bucket,
+          CORSConfiguration: {
+            CORSRules: [
+              {
+                AllowedOrigins: origins,
+                AllowedMethods: ['GET', 'PUT', 'HEAD'],
+                AllowedHeaders: ['*'],
+                ExposeHeaders: ['ETag', 'Content-Length', 'Content-Type'],
+                MaxAgeSeconds: 3600,
+              },
+            ],
+          },
+        }),
+      );
+    },
+    async presignUpload(key, mimeType, expiresIn) {
+      requireEnabled();
+      return getSignedUrl(
+        publicClient,
+        new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: mimeType }),
+        { expiresIn },
+      );
+    },
+    async presignDownload(key, { mimeType, fileName, inline, expiresIn }) {
+      requireEnabled();
+      const disposition = `${inline ? 'inline' : 'attachment'}; filename="${fileName.replace(/"/g, '')}"`;
+      return getSignedUrl(
+        publicClient,
+        new GetObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          ResponseContentType: mimeType,
+          ResponseContentDisposition: disposition,
+        }),
+        { expiresIn },
+      );
+    },
+    async head(key) {
+      requireEnabled();
+      try {
+        return await internal.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+      } catch (error) {
+        if (error?.$metadata?.httpStatusCode === 404 || error?.name === 'NotFound') return null;
+        throw error;
+      }
+    },
+    async getObjectBuffer(key, maxBytes) {
+      requireEnabled();
+      const object = await internal.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+      const chunks = [];
+      let size = 0;
+      for await (const chunk of object.Body) {
+        size += chunk.length;
+        if (size > maxBytes) throw new AppError('File is too large', 413, 'PAYLOAD_TOO_LARGE');
+        chunks.push(chunk);
+      }
+      return Buffer.concat(chunks);
+    },
+    async putObject(key, body, mimeType) {
+      requireEnabled();
+      await internal.send(
+        new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: mimeType }),
+      );
+    },
+    async copyObject(sourceKey, destinationKey) {
+      requireEnabled();
+      await internal.send(
+        new CopyObjectCommand({
+          Bucket: bucket,
+          Key: destinationKey,
+          CopySource: `${bucket}/${sourceKey}`,
+        }),
+      );
+    },
+    async remove(key) {
+      if (!enabled || !key) return;
+      try {
+        await internal.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+      } catch (error) {
+        logger?.warn({ code: 'STORAGE_DELETE_FAILED' }, 'Unable to delete object');
+        throw error;
+      }
+    },
+    sha256(buffer) {
+      return createHash('sha256').update(buffer).digest('hex');
+    },
+  };
+}

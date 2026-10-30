@@ -1,0 +1,85 @@
+name: internal-chat
+
+services:
+  api:
+    build:
+      context: ./backend
+      target: runtime
+    env_file: ./backend/.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3001
+    ports:
+      - "127.0.0.1:3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 75s
+    networks: [internal, ingress]
+
+  postgres:
+    image: postgres:17-bookworm
+    env_file: ./backend/.env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks: [internal]
+
+  storage:
+    image: localstack/localstack:4.4
+    env_file: ./backend/.env
+    environment:
+      SERVICES: s3
+      AWS_DEFAULT_REGION: us-east-1
+      PERSISTENCE: "1"
+    ports:
+      - "127.0.0.1:4566:4566"
+    volumes:
+      - storage_data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+    networks: [internal, ingress]
+
+  tools:
+    profiles: [tools]
+    build:
+      context: ./backend
+      target: tooling
+    env_file: ./backend/.env
+    volumes:
+      - ./backend/src/database:/app/src/database
+    depends_on:
+      postgres:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+    networks: [internal, ingress]
+
+volumes:
+  postgres_data:
+  storage_data:
+
+networks:
+  ingress:
+  internal:
+    internal: true

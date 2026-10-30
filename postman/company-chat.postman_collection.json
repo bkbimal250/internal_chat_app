@@ -1,0 +1,476 @@
+{
+  "info": {
+    "_postman_id": "b7e4c2a1-9d50-4f8b-8c31-company-chat-api",
+    "name": "Company Chat API",
+    "description": "Native-token and cookie/CSRF flows for the Fastify company-chat API.\n\n**Do not export this collection after a run** if Postman prompts to include current variable values. Passwords, refresh tokens, and CSRF tokens must stay out of git.\n\nNative requests must omit `Origin`. Web requests must send `Origin: {{webOrigin}}` and `X-Requested-With: company-chat`. Fill `adminUsername` / `adminPassword` in the Local environment before Admin Login.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "adminAccessToken", "value": "" },
+    { "key": "adminRefreshToken", "value": "" },
+    { "key": "adminCsrfToken", "value": "" },
+    { "key": "adminSessionId", "value": "" },
+    { "key": "adminUserId", "value": "" },
+    { "key": "employeeId", "value": "" },
+    { "key": "employeeAccessToken", "value": "" },
+    { "key": "employeeRefreshToken", "value": "" },
+    { "key": "employeeSessionId", "value": "" },
+    { "key": "employeeTempPassword", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Live",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health/live"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('live', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health/ready"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ready', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Auth (native)",
+      "item": [
+        {
+          "name": "Admin login",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{adminUsername}}\",\n  \"password\": \"{{adminPassword}}\",\n  \"clientType\": \"native\",\n  \"platform\": \"android\",\n  \"deviceName\": \"Postman admin\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('admin login', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('adminAccessToken', body.accessToken || '');",
+                  "pm.collectionVariables.set('adminRefreshToken', body.refreshToken || '');",
+                  "pm.collectionVariables.set('adminSessionId', body.sessionId || '');",
+                  "pm.collectionVariables.set('adminUserId', body.user && body.user.id ? body.user.id : '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Admin change password",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{adminPassword}}\",\n  \"newPassword\": \"{{adminNewPassword}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/change-password"
+          }
+        },
+        {
+          "name": "Employee login",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{employeeUsername}}\",\n  \"password\": \"{{employeeTempPassword}}\",\n  \"clientType\": \"native\",\n  \"platform\": \"android\",\n  \"deviceName\": \"Postman employee\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('employee login', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('employeeAccessToken', body.accessToken || '');",
+                  "pm.collectionVariables.set('employeeRefreshToken', body.refreshToken || '');",
+                  "pm.collectionVariables.set('employeeSessionId', body.sessionId || '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Employee change password",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{employeeAccessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{employeeTempPassword}}\",\n  \"newPassword\": \"{{employeeNewPassword}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/change-password"
+          }
+        },
+        {
+          "name": "Employee login after password change",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{employeeUsername}}\",\n  \"password\": \"{{employeeNewPassword}}\",\n  \"clientType\": \"native\",\n  \"platform\": \"android\",\n  \"deviceName\": \"Postman employee\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('employee relogin', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('employeeAccessToken', body.accessToken || '');",
+                  "pm.collectionVariables.set('employeeRefreshToken', body.refreshToken || '');",
+                  "pm.collectionVariables.set('employeeSessionId', body.sessionId || '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh token",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientType\": \"native\",\n  \"refreshToken\": \"{{employeeRefreshToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/refresh"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('refresh', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('employeeAccessToken', body.accessToken || '');",
+                  "pm.collectionVariables.set('employeeRefreshToken', body.refreshToken || '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Current profile",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{employeeAccessToken}}" }],
+            "url": "{{baseUrl}}/api/v1/auth/me"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('profile', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{employeeAccessToken}}" }],
+            "url": "{{baseUrl}}/api/v1/auth/logout"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('logout', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('employeeAccessToken', '');",
+                  "pm.collectionVariables.set('employeeRefreshToken', '');"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Admin employees",
+      "item": [
+        {
+          "name": "Create employee",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{employeeUsername}}\",\n  \"displayName\": \"{{employeeDisplayName}}\",\n  \"employeeCode\": \"{{employeeCode}}\",\n  \"email\": \"{{employeeEmail}}\",\n  \"role\": \"user\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/users"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('employeeId', body.user && body.user.id ? body.user.id : '');",
+                  "pm.collectionVariables.set('employeeTempPassword', body.temporaryPassword || '');",
+                  "if (body.temporaryPassword) {",
+                  "  pm.environment.set('employeePassword', body.temporaryPassword);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List employees",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+            "url": "{{baseUrl}}/api/v1/admin/users?page=1&limit=20"
+          }
+        },
+        {
+          "name": "Get employee",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+            "url": "{{baseUrl}}/api/v1/admin/users/{{employeeId}}"
+          }
+        },
+        {
+          "name": "Unauthorized registration (expect 401)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"public.signup\",\n  \"displayName\": \"Should Fail\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/users"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('no public signup', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Duplicate username (expect 409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{employeeUsername}}\",\n  \"displayName\": \"Duplicate\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/users"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('duplicate', () => pm.response.to.have.status(409));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Suspend employee",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+            "url": "{{baseUrl}}/api/v1/admin/users/{{employeeId}}/suspend"
+          }
+        },
+        {
+          "name": "Reactivate employee",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+            "url": "{{baseUrl}}/api/v1/admin/users/{{employeeId}}/reactivate"
+          }
+        },
+        {
+          "name": "Reset employee password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+            "url": "{{baseUrl}}/api/v1/admin/users/{{employeeId}}/reset-password"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('reset', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('employeeTempPassword', body.temporaryPassword || '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoke employee sessions",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+            "url": "{{baseUrl}}/api/v1/admin/users/{{employeeId}}/sessions"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth (web cookie + CSRF)",
+      "item": [
+        {
+          "name": "Web admin login",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Origin", "value": "{{webOrigin}}" },
+              { "key": "X-Requested-With", "value": "company-chat" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{adminUsername}}\",\n  \"password\": \"{{adminPassword}}\",\n  \"clientType\": \"web\",\n  \"platform\": \"web\",\n  \"deviceName\": \"Postman browser\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('web login', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('adminAccessToken', body.accessToken || '');",
+                  "pm.collectionVariables.set('adminCsrfToken', body.csrfToken || '');",
+                  "pm.collectionVariables.set('adminSessionId', body.sessionId || '');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Web refresh",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Origin", "value": "{{webOrigin}}" },
+              { "key": "X-Requested-With", "value": "company-chat" },
+              { "key": "X-CSRF-Token", "value": "{{adminCsrfToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientType\": \"web\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/refresh"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('web refresh', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('adminAccessToken', body.accessToken || '');",
+                  "if (body.csrfToken) pm.collectionVariables.set('adminCsrfToken', body.csrfToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Web logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Origin", "value": "{{webOrigin}}" },
+              { "key": "X-Requested-With", "value": "company-chat" },
+              { "key": "X-CSRF-Token", "value": "{{adminCsrfToken}}" },
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/logout"
+          }
+        }
+      ]
+    }
+  ]
+}

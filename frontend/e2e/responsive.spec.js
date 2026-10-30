@@ -1,0 +1,50 @@
+import { test, expect } from '@playwright/test'
+import { loadAccounts, login, openConversation, openNewChat, sendMessage } from './helpers.js'
+
+test.describe('Responsive navigation', () => {
+  test('keeps the desktop rail, list, and chat pane together', async ({ page }) => {
+    const accounts = loadAccounts()
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await login(page, accounts.alpha)
+    await expect(page.getByTestId('workspace-rail')).toBeVisible()
+    await expect(page.getByTestId('conversation-sidebar')).toBeVisible()
+    await expect(page.getByRole('link', { name: 'People' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Groups' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible()
+    await page.getByRole('link', { name: 'People' }).click()
+    await expect(page.getByRole('heading', { name: 'Employee directory' })).toBeVisible()
+    await page.getByRole('link', { name: 'Chats' }).click()
+    await expect(page.getByTestId('chats-heading')).toBeVisible()
+  })
+
+  test('uses a hamburger shell on tablet while keeping list and chat', async ({ page }) => {
+    const accounts = loadAccounts()
+    await page.setViewportSize({ width: 800, height: 1024 })
+    await login(page, accounts.alpha)
+    await expect(page.getByTestId('workspace-rail')).toBeHidden()
+    await expect(page.getByRole('button', { name: 'Open navigation' })).toBeVisible()
+    await expect(page.getByTestId('conversation-sidebar')).toBeVisible()
+    await page.getByRole('button', { name: 'Open navigation' }).click()
+    await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible()
+    await page.getByRole('link', { name: 'Settings' }).click()
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+  })
+
+  test('splits conversation list and chat on mobile with back navigation', async ({ page }) => {
+    const accounts = loadAccounts()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await login(page, accounts.alpha)
+    await expect(page.getByTestId('conversation-sidebar')).toBeVisible()
+    await expect(page.getByTestId('message-pane')).toHaveCount(0)
+    await openNewChat(page, accounts.charlie.displayName)
+    await expect(page.getByTestId('message-pane')).toBeVisible()
+    await expect(page.getByTestId('conversation-sidebar')).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'Back to chats' })).toBeVisible()
+    await sendMessage(page, `mobile-${Date.now()}`)
+    await page.getByRole('link', { name: 'Back to chats' }).click()
+    await expect(page.getByTestId('conversation-sidebar')).toBeVisible()
+    await expect(page.getByTestId('message-pane')).toHaveCount(0)
+    await openConversation(page, accounts.charlie.displayName)
+    await expect(page.getByTestId('message-pane')).toBeVisible()
+  })
+})

@@ -34,6 +34,45 @@ export default async function groupRoutes(app, config) {
     },
     c.update,
   );
+  app.patch(
+    '/api/v1/groups/:id/settings',
+    {
+      preHandler: g,
+      schema: {
+        params: o({ id }),
+        body: o({
+          editInfo: { type: 'string', enum: ['all', 'admins'] },
+          sendMessages: { type: 'string', enum: ['all', 'admins'] },
+          addMembers: { type: 'string', enum: ['all', 'admins'] },
+        }),
+      },
+    },
+    c.updateSettings,
+  );
+  app.post(
+    '/api/v1/groups/:id/photo',
+    {
+      preHandler: g,
+      schema: { params: o({ id }), body: o({ mimeType: { type: 'string', minLength: 1, maxLength: 80 } }) },
+    },
+    c.initPhoto,
+  );
+  app.post(
+    '/api/v1/groups/:id/photo/complete',
+    {
+      preHandler: g,
+      schema: {
+        params: o({ id }),
+        body: o({
+          key: { type: 'string', minLength: 8, maxLength: 256 },
+          mimeType: { type: 'string', minLength: 1, maxLength: 80 },
+        }),
+      },
+    },
+    c.completePhoto,
+  );
+  app.delete('/api/v1/groups/:id/photo', { preHandler: g, schema: { params: o({ id }) } }, c.removePhoto);
+  app.get('/api/v1/groups/:id/photo-url', { preHandler: g, schema: { params: o({ id }) } }, c.photoUrl);
   app.post(
     '/api/v1/groups/:id/members',
     { preHandler: g, schema: { params: o({ id }), body: o({ userId: id }) } },

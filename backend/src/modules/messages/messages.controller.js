@@ -1,11 +1,19 @@
 import { messagesService } from './messages.service.js';
 import { attachmentsService } from '../attachments/attachments.service.js';
+import { notifyNewMessage } from '../notify/message-notify.js';
 export const messagesController = (app) => {
   const s = messagesService(app);
   const files = attachmentsService(app);
-  const emit = async (kind, m) => {
-    await app.broadcaster.conversation(m.conversationId, kind, m);
-    return m;
+  const emit = async (kind, m, userId) => {
+    const presented = await s.present(m, userId);
+    await app.broadcaster.conversation(presented.conversationId, kind, presented);
+    return presented;
+  };
+  const created = async (presented, duplicate) => {
+    if (duplicate) return presented;
+    await app.broadcaster.conversation(presented.conversationId, 'message.created', presented);
+    await notifyNewMessage(app, presented).catch(() => {});
+    return presented;
   };
   return {
     get: (r) => s.get(r.params.id, r.auth.userId),
@@ -13,13 +21,18 @@ export const messagesController = (app) => {
     sync: (r) => s.sync(r.params.id, r.auth.userId, r.query.afterChangeSeq, r.query.limit ?? 50),
     create: async (r, q) => {
       const x = await s.create(r.params.id, r.auth.userId, r.body);
-      if (!x.duplicate) await app.broadcaster.conversation(r.params.id, 'message.created', x.message);
+      const presented = await s.present(x.message, r.auth.userId);
       q.code(x.duplicate ? 200 : 201);
-      return x.message;
+      return created(presented, x.duplicate);
     },
-    edit: async (r) =>
-      emit('message.updated', await s.edit(r.params.id, r.auth.userId, r.body.content)),
-    remove: async (r) => emit('message.deleted', await s.remove(r.params.id, r.auth.userId)),
+    edit: async (r) => emit('message.updated', await s.edit(r.params.id, r.auth.userId, r.body.content), r.auth.userId),
+    remove: async (r) => emit('message.deleted', await s.remove(r.params.id, r.auth.userId), r.auth.userId),
+    hide: async (r) => {
+      const result = await s.hide(r.params.id, r.auth.userId);
+      await app.broadcaster.user(r.auth.userId, 'message.hidden', result);
+      return result;
+    },
+    react: async (r) => emit('message.updated', await s.react(r.params.id, r.auth.userId, r.body.emoji), r.auth.userId),
     forward: async (r, q) => {
       const source = await s.get(r.params.id, r.auth.userId);
       if (source.attachment) {
@@ -27,20 +40,18 @@ export const messagesController = (app) => {
           conversationId: r.body.conversationId,
           clientMessageId: r.body.clientMessageId,
         });
-        if (!forwarded.duplicate) {
-          await app.broadcaster.conversation(r.body.conversationId, 'message.created', forwarded);
-        }
+        const presented = await s.present(forwarded, r.auth.userId);
         q.code(forwarded.duplicate ? 200 : 201);
-        return forwarded;
+        return created(presented, forwarded.duplicate);
       }
       const x = await s.create(r.body.conversationId, r.auth.userId, {
         clientMessageId: r.body.clientMessageId,
         content: r.body.content,
         forwardedFromMessageId: r.params.id,
       });
-      if (!x.duplicate) await app.broadcaster.conversation(r.body.conversationId, 'message.created', x.message);
+      const presented = await s.present(x.message, r.auth.userId);
       q.code(x.duplicate ? 200 : 201);
-      return x.message;
+      return created(presented, x.duplicate);
     },
   };
 };

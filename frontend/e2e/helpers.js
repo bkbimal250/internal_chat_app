@@ -9,17 +9,23 @@ export function loadAccounts() {
   return JSON.parse(readFileSync(accountsPath, 'utf8'))
 }
 
+export async function openPasswordLogin(page) {
+  await page.getByTestId('login-tab-password').click()
+  await expect(page.getByTestId('login-username')).toBeVisible()
+}
+
 export async function login(page, user, landing = 'chats') {
   await page.goto('/login')
   const chats = page.getByTestId('chats-heading')
   const changeHeading = page.getByRole('heading', { name: 'Change password' })
-  const username = page.getByTestId('login-username')
+  const passwordTab = page.getByTestId('login-tab-password')
 
-  await expect(username.or(chats).or(changeHeading)).toBeVisible({ timeout: 20_000 })
+  await expect(passwordTab.or(chats).or(changeHeading)).toBeVisible({ timeout: 20_000 })
   if (landing === 'chats' && (await chats.isVisible().catch(() => false))) return
   if (landing === 'change-password' && (await changeHeading.isVisible().catch(() => false))) return
 
-  await username.fill(user.username)
+  await openPasswordLogin(page)
+  await page.getByTestId('login-username').fill(user.username)
   await page.getByTestId('login-password').fill(user.password)
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -66,11 +72,18 @@ export async function openNewChat(page, displayName) {
 }
 
 export async function sendMessage(page, text) {
-  await page.getByTestId('message-composer').fill(text)
+  const composer = page.getByTestId('message-composer')
+  await composer.click()
+  await composer.fill(text)
+  await expect(composer).toHaveValue(text)
   await page.getByTestId('send-message').click()
-  const row = page.locator('[data-testid="chat-message"]').filter({ hasText: text })
+  const row = page.locator('[data-testid="chat-message"]').filter({ hasText: text }).last()
   await expect(row.getByTestId('message-body')).toBeVisible({ timeout: 15_000 })
   await expect(row.getByTestId(/receipt-(sent|delivered|read)/)).toBeVisible({ timeout: 15_000 })
+}
+
+export function workspaceNav(page, name) {
+  return page.getByRole('button', { name, exact: true })
 }
 
 export async function openConversation(page, title) {

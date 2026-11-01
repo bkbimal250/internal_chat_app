@@ -12,6 +12,7 @@ export function createWebSocketManager({
   let attempt = 0
   let reconnectTimer = null
   let pingTimer = null
+  let generation = 0
   const listeners = new Set()
   const statusListeners = new Set()
   if (onStatus) statusListeners.add(onStatus)
@@ -57,10 +58,13 @@ export function createWebSocketManager({
       return
     }
 
+    const gen = generation + 1
+    generation = gen
     setStatus('connecting')
     socket = new WebSocket(url, ['company-chat', token])
 
     socket.addEventListener('open', () => {
+      if (gen !== generation) return
       attempt = 0
       setStatus('open')
       send({ event: 'ping' })
@@ -68,6 +72,7 @@ export function createWebSocketManager({
     })
 
     socket.addEventListener('message', (message) => {
+      if (gen !== generation) return
       try {
         emit(JSON.parse(message.data))
       } catch {
@@ -76,6 +81,7 @@ export function createWebSocketManager({
     })
 
     socket.addEventListener('close', (event) => {
+      if (gen !== generation) return
       socket = null
       if (pingTimer) {
         window.clearInterval(pingTimer)
@@ -91,18 +97,31 @@ export function createWebSocketManager({
     })
 
     socket.addEventListener('error', () => {
+      if (gen !== generation) return
       setStatus('error')
     })
   }
 
   function disconnect() {
     shouldReconnect = false
+    generation += 1
     clearTimers()
     if (socket) {
       socket.close(1000, 'client_disconnect')
       socket = null
     }
     setStatus('idle')
+  }
+
+  function reconnect() {
+    shouldReconnect = false
+    generation += 1
+    clearTimers()
+    if (socket) {
+      socket.close(1000, 'token_refresh')
+      socket = null
+    }
+    connect()
   }
 
   function send(payload) {
@@ -121,7 +140,7 @@ export function createWebSocketManager({
     return () => statusListeners.delete(listener)
   }
 
-  return { connect, disconnect, send, subscribe, subscribeStatus }
+  return { connect, disconnect, reconnect, send, subscribe, subscribeStatus }
 }
 
 export const websocketManager = createWebSocketManager()

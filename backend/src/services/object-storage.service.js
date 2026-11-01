@@ -1,14 +1,20 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CopyObjectCommand,
   CreateBucketCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   HeadObjectCommand,
+  ListPartsCommand,
   PutBucketCorsCommand,
+  PutBucketLifecycleConfigurationCommand,
   PutObjectCommand,
   S3Client,
-  CopyObjectCommand,
+  UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { AppError } from '../utils/app-error.js';
@@ -74,6 +80,25 @@ export function objectStorage(config, logger) {
           },
         }),
       );
+      await internal
+        .send(
+          new PutBucketLifecycleConfigurationCommand({
+            Bucket: bucket,
+            LifecycleConfiguration: {
+              Rules: [
+                {
+                  ID: 'abort-abandoned-multipart',
+                  Status: 'Enabled',
+                  Filter: { Prefix: 'att/' },
+                  AbortIncompleteMultipartUpload: { DaysAfterInitiation: 2 },
+                },
+              ],
+            },
+          }),
+        )
+        .catch((error) => {
+          logger?.warn({ err: error, code: 'STORAGE_LIFECYCLE_FAILED' }, 'Unable to apply S3 lifecycle rules');
+        });
     },
     async presignUpload(key, mimeType, expiresIn) {
       requireEnabled();
@@ -145,6 +170,112 @@ export function objectStorage(config, logger) {
     },
     sha256(buffer) {
       return createHash('sha256').update(buffer).digest('hex');
+    },
+    async getObjectRange(key, start, end) {
+      requireEnabled();
+      const object = await internal.send(
+        new GetObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Range: `bytes=${start}-${end}`,
+        }),
+      );
+      const chunks = [];
+      let size = 0;
+      const max = Math.max(0, end - start + 1);
+      for await (const chunk of object.Body) {
+        size += chunk.length;
+        chunks.push(chunk);
+        if (size >= max) break;
+      }
+      const buffer = Buffer.concat(chunks);
+      return buffer.subarray(0, max);
+    },
+    async hashObject(key) {
+      requireEnabled();
+      const object = await internal.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+      const hash = createHash('sha256');
+      for await (const chunk of object.Body) {
+        hash.update(chunk);
+      }
+      return hash.digest('hex');
+    },
+    async createMultipartUpload(key, mimeType) {
+      requireEnabled();
+      const result = await internal.send(
+        new CreateMultipartUploadCommand({
+          Bucket: bucket,
+          Key: key,
+          ContentType: mimeType,
+        }),
+      );
+      if (!result.UploadId) throw new AppError('Unable to start multipart upload', 503, 'STORAGE_UNAVAILABLE');
+      return result.UploadId;
+    },
+    async presignUploadPart(key, uploadId, partNumber, expiresIn) {
+      requireEnabled();
+      return getSignedUrl(
+        publicClient,
+        new UploadPartCommand({
+          Bucket: bucket,
+          Key: key,
+          UploadId: uploadId,
+          PartNumber: partNumber,
+        }),
+        { expiresIn },
+      );
+    },
+    async listParts(key, uploadId) {
+      requireEnabled();
+      const parts = [];
+      let marker;
+      for (;;) {
+        const page = await internal.send(
+          new ListPartsCommand({
+            Bucket: bucket,
+            Key: key,
+            UploadId: uploadId,
+            PartNumberMarker: marker,
+          }),
+        );
+        for (const part of page.Parts ?? []) {
+          parts.push({
+            partNumber: part.PartNumber,
+            etag: part.ETag,
+            sizeBytes: Number(part.Size ?? 0),
+          });
+        }
+        if (!page.IsTruncated) break;
+        marker = page.NextPartNumberMarker;
+      }
+      return parts.sort((a, b) => a.partNumber - b.partNumber);
+    },
+    async completeMultipart(key, uploadId, parts) {
+      requireEnabled();
+      await internal.send(
+        new CompleteMultipartUploadCommand({
+          Bucket: bucket,
+          Key: key,
+          UploadId: uploadId,
+          MultipartUpload: {
+            Parts: parts.map((part) => ({ ETag: part.etag, PartNumber: part.partNumber })),
+          },
+        }),
+      );
+    },
+    async abortMultipart(key, uploadId) {
+      if (!enabled || !key || !uploadId) return;
+      try {
+        await internal.send(
+          new AbortMultipartUploadCommand({
+            Bucket: bucket,
+            Key: key,
+            UploadId: uploadId,
+          }),
+        );
+      } catch (error) {
+        logger?.warn({ code: 'STORAGE_ABORT_FAILED' }, 'Unable to abort multipart upload');
+      }
     },
   };
 }

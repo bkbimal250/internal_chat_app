@@ -7,12 +7,21 @@ import {
   users,
 } from '../../database/schema/index.js';
 import { AppError } from '../../utils/app-error.js';
+import { presentGroup } from '../groups/group-permissions.js';
 export const memberWhere = (id, userId) =>
   and(
     eq(conversationMembers.conversationId, id),
     eq(conversationMembers.userId, userId),
     isNull(conversationMembers.leftAt),
   );
+
+export function presentMember({ profilePhotoKey, updatedAt, ...rest }) {
+  return {
+    ...rest,
+    hasProfilePhoto: Boolean(profilePhotoKey),
+    photoVersion: updatedAt instanceof Date ? updatedAt.toISOString() : updatedAt,
+  };
+}
 export function conversationService(app) {
   const db = app.database.db;
   return {
@@ -91,10 +100,15 @@ export function conversationService(app) {
         .limit(limit + 1);
       const data = await Promise.all(
         rows.slice(0, limit).map(async ({ conversation, member }) => {
+          const hidden = sql`not exists (
+            select 1 from message_hides
+            where message_hides.message_id = ${messages.id}
+              and message_hides.user_id = ${userId}::uuid
+          )`;
           const [latest] = await db
             .select()
             .from(messages)
-            .where(eq(messages.conversationId, conversation.id))
+            .where(and(eq(messages.conversationId, conversation.id), hidden))
             .orderBy(desc(messages.sequenceNumber))
             .limit(1);
           const [{ count }] = await db
@@ -106,28 +120,35 @@ export function conversationService(app) {
                 sql`${messages.sequenceNumber} > ${member.lastReadSeq}`,
                 or(isNull(messages.senderId), sql`${messages.senderId} <> ${userId}::uuid`),
                 isNull(messages.deletedAt),
+                hidden,
               ),
             );
-          const members = await db
-            .select({
-              id: users.id,
-              username: users.username,
-              displayName: users.displayName,
-              role: conversationMembers.role,
-              lastReadSeq: conversationMembers.lastReadSeq,
-            })
-            .from(conversationMembers)
-            .innerJoin(users, eq(users.id, conversationMembers.userId))
-            .where(
-              and(
-                eq(conversationMembers.conversationId, conversation.id),
-                isNull(conversationMembers.leftAt),
-              ),
-            );
+          const members = (
+            await db
+              .select({
+                id: users.id,
+                username: users.username,
+                displayName: users.displayName,
+                fullName: users.fullName,
+                role: conversationMembers.role,
+                lastReadSeq: conversationMembers.lastReadSeq,
+                profilePhotoKey: users.profilePhotoKey,
+                updatedAt: users.updatedAt,
+              })
+              .from(conversationMembers)
+              .innerJoin(users, eq(users.id, conversationMembers.userId))
+              .where(
+                and(
+                  eq(conversationMembers.conversationId, conversation.id),
+                  isNull(conversationMembers.leftAt),
+                ),
+              )
+          ).map(presentMember);
           return {
-            ...conversation,
+            ...presentGroup(conversation),
             unreadCount: count,
             latestMessage: latest ?? null,
+            mutedUntil: member.mutedUntil,
             members,
           };
         }),
@@ -140,19 +161,24 @@ export function conversationService(app) {
     },
     async details(id, userId) {
       const { conversation, member } = await this.assertMember(id, userId);
-      const members = await db
-        .select({
-          id: users.id,
-          username: users.username,
-          displayName: users.displayName,
-          role: conversationMembers.role,
-          lastReadSeq: conversationMembers.lastReadSeq,
-          joinedAt: conversationMembers.joinedAt,
-        })
-        .from(conversationMembers)
-        .innerJoin(users, eq(users.id, conversationMembers.userId))
-        .where(and(eq(conversationMembers.conversationId, id), isNull(conversationMembers.leftAt)));
-      return { ...conversation, membership: member, members };
+      const members = (
+        await db
+          .select({
+            id: users.id,
+            username: users.username,
+            displayName: users.displayName,
+            fullName: users.fullName,
+            role: conversationMembers.role,
+            lastReadSeq: conversationMembers.lastReadSeq,
+            joinedAt: conversationMembers.joinedAt,
+            profilePhotoKey: users.profilePhotoKey,
+            updatedAt: users.updatedAt,
+          })
+          .from(conversationMembers)
+          .innerJoin(users, eq(users.id, conversationMembers.userId))
+          .where(and(eq(conversationMembers.conversationId, id), isNull(conversationMembers.leftAt)))
+      ).map(presentMember);
+      return { ...presentGroup(conversation), membership: member, members };
     },
     async read(id, userId, seq) {
       const { conversation } = await this.assertMember(id, userId);

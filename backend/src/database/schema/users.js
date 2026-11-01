@@ -20,7 +20,12 @@ export const users = pgTable(
     employeeCode: varchar('employee_code', { length: 64 }),
     username: varchar('username', { length: 64 }).notNull(),
     displayName: varchar('display_name', { length: 120 }).notNull(),
+    fullName: varchar('full_name', { length: 120 }).notNull().default(''),
     email: varchar('email', { length: 254 }),
+    phoneE164: varchar('phone_e164', { length: 16 }),
+    phoneVerifiedAt: timestamp('phone_verified_at', { withTimezone: true }),
+    address: text('address'),
+    profilePhotoKey: varchar('profile_photo_key', { length: 128 }),
     passwordHash: text('password_hash').notNull(),
     role: userRole('role').notNull().default('user'),
     status: userStatus('status').notNull().default('active'),
@@ -41,6 +46,9 @@ export const users = pgTable(
     uniqueIndex('users_employee_code_unique')
       .on(t.employeeCode)
       .where(sql`${t.employeeCode} is not null`),
+    uniqueIndex('users_phone_e164_unique')
+      .on(t.phoneE164)
+      .where(sql`${t.phoneE164} is not null and ${t.deletedAt} is null`),
     index('users_status_created_idx').on(t.status, t.createdAt),
   ],
 );

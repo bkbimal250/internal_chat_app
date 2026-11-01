@@ -2,11 +2,18 @@ import { and, asc, count, eq, ilike, isNull, or } from 'drizzle-orm';
 import { users } from '../../database/schema/index.js';
 export const visible = and(eq(users.status, 'active'), isNull(users.deletedAt));
 export async function directory(db, { page, limit, search }) {
-  const filter = search
+  const term = String(search || '')
+    .trim()
+    .replace(/^@/, '');
+  const like = term ? `%${term}%` : undefined;
+  const phoneLike = term ? `%${term.replace(/[\s-]/g, '')}%` : undefined;
+  const filter = like
     ? or(
-        ilike(users.username, `%${search}%`),
-        ilike(users.displayName, `%${search}%`),
-        ilike(users.employeeCode, `%${search}%`),
+        ilike(users.username, like),
+        ilike(users.displayName, like),
+        ilike(users.fullName, like),
+        ilike(users.employeeCode, like),
+        ilike(users.phoneE164, phoneLike),
       )
     : undefined;
   const where = and(visible, filter);

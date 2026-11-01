@@ -10,6 +10,7 @@ export function createDatabase(config, logger) {
   let closePromise;
   return {
     db,
+    pool,
     async check() {
       await pool.query('SELECT 1');
     },

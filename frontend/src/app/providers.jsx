@@ -5,6 +5,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 import { useAuthStore } from '@/stores/auth-store'
 import { RealtimeProvider } from '@/features/realtime/RealtimeProvider'
+import { SessionLoading, SessionUnavailable } from '@/features/auth/SessionLoading'
 
 function SessionBootstrap({ children }) {
   const status = useAuthStore((state) => state.status)
@@ -15,11 +16,11 @@ function SessionBootstrap({ children }) {
   }, [restoreSession])
 
   if (status === 'idle' || status === 'loading') {
-    return (
-      <div className="flex min-h-dvh items-center justify-center bg-background">
-        <p className="text-sm text-muted-foreground">Restoring session…</p>
-      </div>
-    )
+    return <SessionLoading />
+  }
+
+  if (status === 'unavailable') {
+    return <SessionUnavailable onRetry={() => restoreSession()} />
   }
 
   return children

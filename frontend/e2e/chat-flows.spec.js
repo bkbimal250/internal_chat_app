@@ -52,6 +52,29 @@ test.describe('Realtime messaging, receipts, groups, and sync', () => {
     })
   })
 
+  test('moves the latest personal chat to the top with preview and unread', async () => {
+    const sortText = `sort-${stamp}`
+    await openNewChat(alpha, accounts.charlie.displayName)
+    await sendMessage(alpha, sortText)
+
+    const alphaTop = alpha.getByTestId('conversation-item').first()
+    await expect(alphaTop).toContainText(accounts.charlie.displayName)
+    await expect(alphaTop).toContainText(sortText)
+    await expect(alpha).toHaveURL('http://127.0.0.1:5173/')
+
+    const charlieTop = charlie.getByTestId('conversation-item').first()
+    await expect(charlieTop).toContainText(accounts.alpha.displayName, { timeout: 20_000 })
+    await expect(charlieTop).toContainText(sortText)
+    await expect(charlieTop.getByTestId('unread-count')).toBeVisible()
+
+    await openConversation(alpha, accounts.bravo.displayName)
+    const bumpText = `bump-${stamp}`
+    await sendMessage(alpha, bumpText)
+    await expect(alpha.getByTestId('conversation-item').first()).toContainText(accounts.bravo.displayName)
+    await expect(alpha.getByTestId('conversation-item').first()).toContainText(bumpText)
+    await expect(bravo.getByTestId('conversation-item').first()).toContainText(bumpText, { timeout: 20_000 })
+  })
+
   test('shows delivery and read receipt ticks', async () => {
     await expect(alpha.getByTestId('receipt-read').first()).toBeVisible({ timeout: 20_000 })
   })
@@ -73,13 +96,16 @@ test.describe('Realtime messaging, receipts, groups, and sync', () => {
     })
     await alpha.getByRole('button', { name: 'Group info' }).click()
     await expect(alpha.getByRole('heading', { name: groupName })).toBeVisible()
-    await alpha.getByPlaceholder('Search employees').fill(accounts.bravo.displayName)
+    await alpha.getByTestId('open-add-members').click()
+    await expect(alpha.getByTestId('add-members-dialog')).toBeVisible()
+    await alpha.getByTestId('add-member-search').fill(accounts.bravo.displayName)
     await alpha.getByTestId('add-member').filter({ hasText: accounts.bravo.displayName }).click()
+    await alpha.getByTestId('add-member-search').fill(accounts.charlie.displayName)
+    await alpha.getByTestId('add-member').filter({ hasText: accounts.charlie.displayName }).click()
+    await alpha.getByTestId('confirm-add-members').click()
     await expect(
       alpha.getByTestId('group-member').filter({ hasText: accounts.bravo.displayName }),
     ).toBeVisible({ timeout: 15_000 })
-    await alpha.getByPlaceholder('Search employees').fill(accounts.charlie.displayName)
-    await alpha.getByTestId('add-member').filter({ hasText: accounts.charlie.displayName }).click()
     await expect(
       alpha.getByTestId('group-member').filter({ hasText: accounts.charlie.displayName }),
     ).toBeVisible({ timeout: 15_000 })
@@ -98,25 +124,28 @@ test.describe('Realtime messaging, receipts, groups, and sync', () => {
     await openConversation(alpha, groupName)
     await alpha.getByRole('button', { name: 'Group info' }).click()
     const bravoRow = alpha.getByTestId('group-member').filter({ hasText: accounts.bravo.displayName })
-    await expect(bravoRow.getByTestId('member-promote')).toBeVisible()
+    await bravoRow.getByRole('button', { name: 'Member actions' }).click()
+    await expect(alpha.getByTestId('member-promote')).toBeVisible()
     await Promise.all([
       alpha.waitForResponse(
         (response) =>
           response.request().method() === 'PATCH' && response.url().includes('/role') && response.ok(),
         { timeout: 15_000 },
       ),
-      bravoRow.getByTestId('member-promote').click(),
+      alpha.getByTestId('member-promote').click(),
     ])
     await expect(bravoRow).toHaveAttribute('data-member-role', 'admin', { timeout: 15_000 })
+    await bravoRow.getByRole('button', { name: 'Member actions' }).click()
     await Promise.all([
       alpha.waitForResponse(
         (response) =>
           response.request().method() === 'PATCH' && response.url().includes('/role') && response.ok(),
         { timeout: 15_000 },
       ),
-      bravoRow.getByTestId('member-demote').click(),
+      alpha.getByTestId('member-demote').click(),
     ])
     await expect(bravoRow).toHaveAttribute('data-member-role', 'member', { timeout: 15_000 })
+    await bravoRow.getByRole('button', { name: 'Member actions' }).click()
     await Promise.all([
       alpha.waitForResponse(
         (response) =>
@@ -125,7 +154,7 @@ test.describe('Realtime messaging, receipts, groups, and sync', () => {
           response.ok(),
         { timeout: 15_000 },
       ),
-      bravoRow.getByTestId('member-make-owner').click(),
+      alpha.getByTestId('member-make-owner').click(),
     ])
     await expect(
       alpha
@@ -182,7 +211,7 @@ test.describe('Realtime messaging, receipts, groups, and sync', () => {
     await alpha.getByRole('menuitem', { name: 'Reply' }).click()
     await expect(alpha.getByText(/Replying to/)).toBeVisible()
     await sendMessage(alpha, replyText)
-    await expect(bravo.getByText('Replying to a message')).toBeVisible({ timeout: 15_000 })
+    await expect(bravo.getByTestId('message-quote')).toBeVisible({ timeout: 15_000 })
     await expect(bravo.getByTestId('message-body').filter({ hasText: replyText })).toBeVisible()
 
     await sendMessage(alpha, deletedText)
@@ -216,6 +245,7 @@ test.describe('Realtime messaging, receipts, groups, and sync', () => {
 
     await openMessageMenu(alpha, editedText)
     await alpha.getByRole('menuitem', { name: 'Delete' }).click()
+    await alpha.getByRole('button', { name: 'Delete for everyone' }).click()
     await expect(alpha.getByText('This message was deleted')).toBeVisible()
     await expect(bravo.getByText('This message was deleted')).toBeVisible({ timeout: 15_000 })
 
@@ -227,13 +257,14 @@ test.describe('Realtime messaging, receipts, groups, and sync', () => {
       timeout: 15_000,
     })
     await openConversation(alpha, accounts.bravo.displayName)
+    await expect(alpha.getByTestId('message-pane').getByText(accounts.bravo.displayName)).toBeVisible()
     await sendMessage(alpha, forwardText)
     await openMessageMenu(alpha, forwardText)
     await alpha.getByRole('menuitem', { name: 'Forward' }).click()
     await alpha.getByRole('button', { name: forwardGroup }).click()
     await expect(alpha.getByText('Message forwarded')).toBeVisible()
     await openConversation(alpha, forwardGroup)
-    await expect(alpha.getByText('Forwarded')).toBeVisible()
-    await expect(alpha.getByTestId('message-body').filter({ hasText: forwardText })).toBeVisible()
+    await expect(alpha.getByTestId('chat-message').getByText('Forwarded')).toBeVisible()
+    await expect(alpha.getByTestId('message-body').filter({ hasText: forwardText }).first()).toBeVisible()
   })
 })

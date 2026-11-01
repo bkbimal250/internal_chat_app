@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "node --watch --env-file-if-exists=.env src/server.js",
     "start": "node --env-file-if-exists=.env src/server.js",
+    "worker:retention": "node --env-file-if-exists=.env src/workers/retention.worker.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
@@ -33,8 +34,12 @@
     "drizzle-orm": "^0.45.4",
     "fastify": "^5.12.7",
     "file-type": "^22.3.0",
+    "firebase": "^13.1.0",
+    "firebase-admin": "^14.5.0",
     "pg": "^8.23.1",
     "pino": "^10.4.0",
+    "sharp": "^0.35.5",
+    "twilio": "^6.2.0",
     "ws": "^8.22.0"
   },
   "overrides": {

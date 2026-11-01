@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useWorkspace } from '@/hooks/use-workspace'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import { Menu, Plus, Search, Users } from 'lucide-react'
-import { conversationsApi, groupsApi, usersApi } from '@/services/api'
+import { conversationsApi, usersApi } from '@/services/api'
 import { queryKeys } from '@/lib/query-keys'
+import { CreateGroupDialog } from '@/features/groups/CreateGroupDialog'
 import { conversationTitle, filterConversations, previewText } from '@/lib/conversations'
 import { formatMessageTime } from '@/lib/time'
 import { useAuth } from '@/hooks/use-auth'
@@ -23,7 +24,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -32,7 +32,7 @@ import { toast } from 'sonner'
 
 function NewChatDialog({ open, onOpenChange }) {
   const { user } = useAuth()
-  const navigate = useNavigate()
+  const { openChat } = useWorkspace()
   const [search, setSearch] = useState('')
   const directory = useQuery({
     queryKey: queryKeys.directory({ search, page: 1, limit: 20 }),
@@ -43,7 +43,7 @@ function NewChatDialog({ open, onOpenChange }) {
     mutationFn: (userId) => conversationsApi.direct(userId),
     onSuccess: (result) => {
       onOpenChange(false)
-      navigate(`/c/${result.id}`)
+      openChat(result.id)
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   })
@@ -72,7 +72,7 @@ function NewChatDialog({ open, onOpenChange }) {
                   className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-muted"
                   onClick={() => start.mutate(person.id)}
                 >
-                  <UserAvatar name={person.displayName} />
+                  <UserAvatar person={person} />
                   <span>
                     <span className="block text-sm font-medium">{person.displayName}</span>
                     <span className="text-xs text-muted-foreground">@{person.username}</span>
@@ -86,46 +86,8 @@ function NewChatDialog({ open, onOpenChange }) {
   )
 }
 
-function CreateGroupDialog({ open, onOpenChange }) {
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const [title, setTitle] = useState('')
-  const create = useMutation({
-    mutationFn: () => groupsApi.create({ title }),
-    onSuccess: (conversation) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.conversations })
-      onOpenChange(false)
-      setTitle('')
-      navigate(`/c/${conversation.id}`)
-    },
-    onError: (error) => toast.error(getErrorMessage(error)),
-  })
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Create group</DialogTitle>
-          <DialogDescription>You can add members after the group is created.</DialogDescription>
-        </DialogHeader>
-        <Input
-          placeholder="Group name"
-          value={title}
-          onChange={(event) => setTitle(event.target.value)}
-          data-testid="group-name"
-        />
-        <DialogFooter>
-          <Button onClick={() => create.mutate()} disabled={!title.trim() || create.isPending}>
-            {create.isPending ? 'Creating…' : 'Create group'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 export function ConversationSidebar() {
-  const { conversationId } = useParams()
+  const { conversationId, openChat } = useWorkspace()
   const { user } = useAuth()
   const isDesktop = useMediaQuery('(min-width: 768px)')
   const filter = useUiStore((state) => state.conversationFilter)
@@ -139,7 +101,7 @@ export function ConversationSidebar() {
 
   const list = useQuery({
     queryKey: queryKeys.conversations,
-    queryFn: () => conversationsApi.list({ limit: 50 }),
+    queryFn: () => conversationsApi.list({ limit: 100 }),
   })
 
   const items = useMemo(
@@ -151,7 +113,7 @@ export function ConversationSidebar() {
 
   return (
     <aside
-      className="flex h-full min-h-0 w-full flex-col border-r bg-card md:w-80 lg:w-96"
+      className="flex h-full min-h-0 w-full flex-col border-r bg-card"
       data-testid="conversation-sidebar"
     >
       <div className="flex items-center justify-between gap-2 px-3 pt-3">
@@ -229,19 +191,27 @@ export function ConversationSidebar() {
               const active = conversation.id === conversationId
               return (
                 <li key={conversation.id}>
-                  <Link
-                    to={`/c/${conversation.id}`}
+                  <button
+                    type="button"
                     data-testid="conversation-item"
                     data-conversation-id={conversation.id}
+                    onClick={() => openChat(conversation.id)}
                     className={cn(
-                      'flex items-center gap-3 px-3 py-3 hover:bg-muted/70',
+                      'flex w-full items-center gap-3 px-3 py-3 text-left hover:bg-muted/70',
                       active && 'bg-accent',
                     )}
                   >
-                    <UserAvatar
-                      name={conversationTitle(conversation, user?.id)}
-                      online={online}
-                    />
+                    {conversation.type === 'group' ? (
+                      <UserAvatar
+                        variant="group"
+                        userId={conversation.id}
+                        name={conversationTitle(conversation, user?.id)}
+                        hasPhoto={conversation.hasAvatar}
+                        photoVersion={conversation.avatarVersion}
+                      />
+                    ) : (
+                      <UserAvatar person={peer} name={conversationTitle(conversation, user?.id)} online={online} />
+                    )}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <p className="truncate text-sm font-semibold">
@@ -256,11 +226,16 @@ export function ConversationSidebar() {
                           {previewText(conversation.latestMessage)}
                         </p>
                         {conversation.unreadCount > 0 ? (
-                          <Badge className="h-5 min-w-5 px-1.5">{conversation.unreadCount}</Badge>
+                          <Badge
+                            data-testid="unread-count"
+                            className="h-5 min-w-5 justify-center rounded-full bg-emerald-500 px-1.5 text-[11px] text-white"
+                          >
+                            {conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}
+                          </Badge>
                         ) : null}
                       </div>
                     </div>
-                  </Link>
+                  </button>
                 </li>
               )
             })}

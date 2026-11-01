@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { Outlet } from 'react-router-dom'
 import { LogOut, MessageSquare, Settings, Shield, Users, Contact } from 'lucide-react'
 import { BrandMark } from '@/components/common/BrandMark'
 import { Button } from '@/components/ui/button'
@@ -10,51 +10,53 @@ import {
 } from '@/components/ui/tooltip'
 import { UserAvatar } from '@/components/common/UserAvatar'
 import { useAuth } from '@/hooks/use-auth'
+import { useWorkspace } from '@/hooks/use-workspace'
 import { useUiStore } from '@/stores/ui-store'
 import { cn } from '@/lib/utils'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
+import { NotificationCenter } from '@/features/retention/NotificationCenter'
 
 const links = [
-  { to: '/', label: 'Chats', icon: MessageSquare, match: (path) => path === '/' || path.startsWith('/c/') },
-  { to: '/directory', label: 'People', icon: Contact },
-  { to: '/groups', label: 'Groups', icon: Users },
-  { to: '/settings', label: 'Settings', icon: Settings },
-  { to: '/admin', label: 'Admin', icon: Shield, admin: true },
+  { view: 'chats', label: 'Chats', icon: MessageSquare },
+  { view: 'directory', label: 'People', icon: Contact },
+  { view: 'groups', label: 'Groups', icon: Users },
+  { view: 'settings', label: 'Settings', icon: Settings },
+  { view: 'admin', label: 'Admin', icon: Shield, admin: true },
 ]
 
 function NavItems({ onNavigate, collapsed }) {
   const { isAdmin } = useAuth()
-  const location = useLocation()
+  const { view, openView } = useWorkspace()
   return links
     .filter((link) => !link.admin || isAdmin)
     .map((link) => {
       const Icon = link.icon
+      const isActive = view === link.view
       const item = (
-        <NavLink
-          key={link.to}
-          to={link.to}
-          end={link.to === '/'}
-          onClick={onNavigate}
-          className={() => {
-            const isActive = link.match
-              ? link.match(location.pathname)
-              : location.pathname === link.to || location.pathname.startsWith(`${link.to}/`)
-            return cn(
-              'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors',
-              collapsed && 'justify-center px-0',
-              isActive
-                ? 'bg-sidebar-accent text-sidebar-foreground'
-                : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground',
-            )
+        <button
+          key={link.view}
+          type="button"
+          data-testid={`nav-${link.view}`}
+          onClick={() => {
+            openView(link.view)
+            onNavigate?.()
           }}
+          aria-current={isActive ? 'page' : undefined}
+          className={cn(
+            'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors',
+            collapsed && 'justify-center px-0',
+            isActive
+              ? 'bg-sidebar-accent text-sidebar-foreground'
+              : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground',
+          )}
         >
           <Icon className="size-4 text-gold" aria-hidden="true" />
           {collapsed ? <span className="sr-only">{link.label}</span> : link.label}
-        </NavLink>
+        </button>
       )
       if (!collapsed) return item
       return (
-        <Tooltip key={link.to}>
+        <Tooltip key={link.view}>
           <TooltipTrigger asChild>{item}</TooltipTrigger>
           <TooltipContent side="right">{link.label}</TooltipContent>
         </Tooltip>
@@ -85,15 +87,14 @@ function SidebarBody({ collapsed, onNavigate }) {
       <div className={cn('p-3', collapsed && 'px-2')}>
         <Separator className="mb-3 bg-sidebar-border" />
         <div className={cn('flex items-center gap-3', collapsed && 'justify-center')}>
-          <UserAvatar name={user?.displayName} inverted />
-          {collapsed ? null : (
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{user?.displayName}</p>
-              <p className="truncate text-xs text-sidebar-foreground/60">
-                {connectionStatus === 'open' ? 'Realtime connected' : 'Connecting…'}
-              </p>
-            </div>
-          )}
+          <NotificationCenter collapsed={collapsed} />
+          <UserAvatar person={user} inverted />
+          <div className={cn('min-w-0', collapsed && 'sr-only')}>
+            <p className="truncate text-sm font-medium">{user?.displayName}</p>
+            <p className="truncate text-xs text-sidebar-foreground/60" data-testid="realtime-status">
+              {connectionStatus === 'open' ? 'Realtime connected' : 'Connecting…'}
+            </p>
+          </div>
         </div>
         <Button
           variant="sidebar"
@@ -110,10 +111,10 @@ function SidebarBody({ collapsed, onNavigate }) {
 }
 
 export function ChatLayout() {
-  const location = useLocation()
+  const { view } = useWorkspace()
   const mobileNavOpen = useUiStore((state) => state.mobileNavOpen)
   const setMobileNavOpen = useUiStore((state) => state.setMobileNavOpen)
-  const chatRoute = location.pathname === '/' || location.pathname.startsWith('/c/')
+  const chatRoute = view === 'chats'
 
   return (
     <div className="flex h-dvh overflow-hidden bg-background">

@@ -40,6 +40,7 @@ export const attachments = pgTable(
     kind: varchar('kind', { length: 16 }).notNull(),
     status: attachmentStatus('status').notNull().default('pending'),
     rejectionReason: text('rejection_reason'),
+    multipartUploadId: varchar('multipart_upload_id', { length: 256 }),
     uploadExpiresAt: timestamp('upload_expires_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     finalizedAt: timestamp('finalized_at', { withTimezone: true }),

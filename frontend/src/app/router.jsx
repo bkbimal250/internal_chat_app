@@ -1,37 +1,13 @@
-import { lazy, Suspense } from 'react'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { AuthLayout } from '@/layouts/AuthLayout'
 import { ChatLayout } from '@/layouts/ChatLayout'
+import { WorkspaceShell } from '@/layouts/WorkspaceShell'
+import { LegacyRedirect } from '@/layouts/LegacyRedirect'
 import { LoginPage } from '@/pages/LoginPage'
 import { ChangePasswordPage } from '@/pages/ChangePasswordPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { AuthGuard } from '@/features/auth/AuthGuard'
-import { AdminGuard } from '@/features/auth/AdminGuard'
 import { GuestGuard } from '@/features/auth/GuestGuard'
-
-const ChatPage = lazy(() =>
-  import('@/pages/ChatPage').then((module) => ({ default: module.ChatPage })),
-)
-const SettingsPage = lazy(() =>
-  import('@/pages/SettingsPage').then((module) => ({ default: module.SettingsPage })),
-)
-const DirectoryPage = lazy(() =>
-  import('@/pages/DirectoryPage').then((module) => ({ default: module.DirectoryPage })),
-)
-const GroupsPage = lazy(() =>
-  import('@/pages/GroupsPage').then((module) => ({ default: module.GroupsPage })),
-)
-const AdminDashboardPage = lazy(() =>
-  import('@/pages/AdminDashboardPage').then((module) => ({ default: module.AdminDashboardPage })),
-)
-
-function ScreenFallback() {
-  return (
-    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-      Loading…
-    </div>
-  )
-}
 
 export function AppRouter() {
   return (
@@ -62,56 +38,12 @@ export function AppRouter() {
             </AuthGuard>
           }
         >
-          <Route
-            path="/"
-            element={
-              <Suspense fallback={<ScreenFallback />}>
-                <ChatPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="/c/:conversationId"
-            element={
-              <Suspense fallback={<ScreenFallback />}>
-                <ChatPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="/directory"
-            element={
-              <Suspense fallback={<ScreenFallback />}>
-                <DirectoryPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="/groups"
-            element={
-              <Suspense fallback={<ScreenFallback />}>
-                <GroupsPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <Suspense fallback={<ScreenFallback />}>
-                <SettingsPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="/admin"
-            element={
-              <AdminGuard>
-                <Suspense fallback={<ScreenFallback />}>
-                  <AdminDashboardPage />
-                </Suspense>
-              </AdminGuard>
-            }
-          />
+          <Route path="/" element={<WorkspaceShell />} />
+          <Route path="/c/:conversationId" element={<LegacyRedirect view="chats" />} />
+          <Route path="/directory" element={<LegacyRedirect view="directory" />} />
+          <Route path="/groups" element={<LegacyRedirect view="groups" />} />
+          <Route path="/settings" element={<LegacyRedirect view="settings" />} />
+          <Route path="/admin" element={<LegacyRedirect view="admin" />} />
         </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Routes>

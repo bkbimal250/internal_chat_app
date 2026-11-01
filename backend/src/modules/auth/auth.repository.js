@@ -25,7 +25,13 @@ export function publicUser(user) {
     employeeCode: user.employeeCode,
     username: user.username,
     displayName: user.displayName,
+    fullName: user.fullName || user.displayName,
     email: user.email,
+    phoneE164: user.phoneE164 ?? null,
+    phoneVerifiedAt: user.phoneVerifiedAt ?? null,
+    address: user.address ?? null,
+    hasProfilePhoto: Boolean(user.profilePhotoKey),
+    profilePhotoUrl: user.profilePhotoUrl ?? null,
     role: user.role,
     status: user.status,
     mustChangePassword: user.mustChangePassword,
@@ -36,7 +42,7 @@ export function publicUser(user) {
 export async function audit(tx, context, action, targetType, targetId = null, metadata = {}) {
   // Only explicit system-generated fields are allowed in audit metadata.
   const safe = {};
-  for (const key of ['reason', 'count', 'platform', 'fields']) {
+  for (const key of ['reason', 'count', 'platform', 'fields', 'method']) {
     if (metadata[key] !== undefined) safe[key] = metadata[key];
   }
   await tx.insert(auditLogs).values({

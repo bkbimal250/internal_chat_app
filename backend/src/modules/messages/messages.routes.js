@@ -69,6 +69,18 @@ export default async function messageRoutes(app) {
     c.edit,
   );
   app.delete('/api/v1/messages/:id', { preHandler: g, schema: { params: obj({ id }) } }, c.remove);
+  app.post('/api/v1/messages/:id/hide', { preHandler: g, schema: { params: obj({ id }) } }, c.hide);
+  app.post(
+    '/api/v1/messages/:id/reactions',
+    {
+      preHandler: g,
+      schema: {
+        params: obj({ id }),
+        body: obj({ emoji: { type: 'string', minLength: 1, maxLength: 8 } }, ['emoji']),
+      },
+    },
+    c.react,
+  );
   app.post(
     '/api/v1/messages/:id/forward',
     {

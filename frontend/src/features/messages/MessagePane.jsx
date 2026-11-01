@@ -1,36 +1,38 @@
-import { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, lazy, Suspense } from 'react'
+import { useWorkspace } from '@/hooks/use-workspace'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Virtuoso } from 'react-virtuoso'
 import {
+  ArrowDown,
   ArrowLeft,
   Check,
   CheckCheck,
-  CornerUpLeft,
   Forward,
   Info,
-  MoreHorizontal,
-  Paperclip,
-  Pencil,
+  LogOut,
+  MoreVertical,
+  Mic,
+  Search,
   Send,
   Smile,
-  Trash2,
+  UserPlus,
+  X,
 } from 'lucide-react'
-import { conversationsApi, messagesApi, receiptsApi, groupsApi, usersApi } from '@/services/api'
+import { conversationsApi, messagesApi, receiptsApi, groupsApi, retentionApi } from '@/services/api'
+import { touchConversationFromMessage } from '@/lib/realtime-events'
 import { websocketManager } from '@/services/websocket'
 import { queryKeys } from '@/lib/query-keys'
 import {
   applySyncRecords,
-  canMutateMessage,
   newestSequence,
   oldestSequence,
   receiptStatus,
   sortMessages,
   upsertMessage,
 } from '@/lib/messages'
-import { conversationTitle, conversationPeer } from '@/lib/conversations'
+import { conversationTitle, conversationPeer, previewText } from '@/lib/conversations'
+import { MessageActions, ReactionChips } from '@/features/messages/MessageActions'
 import { formatDateSeparator, formatMessageTime, sameDay } from '@/lib/time'
-import { canManageGroup, memberRole } from '@/lib/permissions'
+import { canAddGroupMembers, canSendGroupMessages, groupSettings, memberRole } from '@/lib/permissions'
 import { useAuth } from '@/hooks/use-auth'
 import { usePresenceStore, useTypingStore, useUiStore } from '@/stores/ui-store'
 import { Button } from '@/components/ui/button'
@@ -42,9 +44,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import {
   Dialog,
   DialogContent,
@@ -59,6 +61,11 @@ import { getErrorMessage } from '@/services/api-error'
 import { toast } from 'sonner'
 import { AttachmentMedia, UploadProgress } from '@/features/messages/AttachmentViews'
 import { ATTACHMENT_ACCEPT, uploadAttachment } from '@/features/messages/attachment-upload'
+import { AttachMenu } from '@/features/messages/AttachMenu'
+import { startVoiceRecording } from '@/features/messages/voice-record'
+import { ChatInfoPanel } from '@/features/groups/ChatInfoPanel'
+import { RetentionBanner, retentionCopy } from '@/features/retention/RetentionBanner'
+import { visibleMessages } from '@/lib/messages'
 
 const EmojiPicker = lazy(() => import('emoji-picker-react'))
 const EMPTY_IDS = []
@@ -80,15 +87,13 @@ function MessageBubble({
   receipts,
   currentUserId,
   isGroup,
+  conversationType,
+  highlight = false,
 }) {
   const mine = message.senderId === currentUserId
   const sender = members.find((member) => member.id === message.senderId)
   const showDay = !previous || !sameDay(previous.createdAt, message.createdAt)
-  const replyTo = useUiStore((state) => state.setReplyTo)
-  const setEditing = useUiStore((state) => state.setEditingMessage)
-  const setForwarding = useUiStore((state) => state.setForwardingMessage)
-  const queryClient = useQueryClient()
-  const mutable = canMutateMessage(message, currentUserId)
+  const quoted = message.replyTo
 
   if (message.messageType === 'system') {
     return (
@@ -100,103 +105,101 @@ function MessageBubble({
   }
 
   return (
-    <div className="px-4">
+    <div className="px-3 md:px-8">
       {showDay ? (
-        <p className="py-3 text-center text-xs font-medium text-muted-foreground">
-          {formatDateSeparator(message.createdAt)}
+        <p className="py-3 text-center text-[11px] font-medium text-muted-foreground">
+          <span className="rounded-full bg-card/90 px-3 py-1 shadow-xs">{formatDateSeparator(message.createdAt)}</span>
         </p>
       ) : null}
       <div
-        className={cn('mb-1 flex', mine ? 'justify-end' : 'justify-start')}
+        className={cn('group mb-0.5 flex items-start gap-1', mine ? 'justify-end' : 'justify-start')}
         data-testid="chat-message"
         data-message-id={message.id}
         data-mine={mine ? 'true' : 'false'}
       >
-        <div
-          className={cn(
-            'max-w-[min(32rem,85%)] rounded-2xl px-3 py-2 text-sm shadow-xs',
-            message.deletedAt
-              ? 'bg-muted italic text-muted-foreground'
-              : mine
-                ? 'rounded-br-md bg-primary text-primary-foreground'
-                : 'rounded-bl-md bg-secondary',
-          )}
-        >
-          {!mine && isGroup ? (
-            <p className="mb-1 text-xs font-semibold text-primary">{sender?.displayName}</p>
-          ) : null}
-          {message.replyToMessageId ? (
-            <p className="mb-1 border-l-2 border-current/40 pl-2 text-xs opacity-80">Replying to a message</p>
-          ) : null}
-          {message.forwardedFromMessageId ? (
-            <p className="mb-1 text-[11px] uppercase tracking-wide opacity-70">Forwarded</p>
-          ) : null}
-          {message.deletedAt ? (
-            <p className="whitespace-pre-wrap break-words" data-testid="message-body">
-              This message was deleted
-            </p>
-          ) : message.attachment ? (
-            <AttachmentMedia attachment={message.attachment} caption={message.content} mine={mine} />
-          ) : (
-            <p className="whitespace-pre-wrap break-words" data-testid="message-body">
-              {message.content}
-            </p>
-          )}
-          <div className={cn('mt-1 flex items-center justify-end gap-1 text-[11px]', mine ? 'opacity-80' : 'text-muted-foreground')}>
-            {message.editedAt ? <span>edited</span> : null}
-            <span>{formatMessageTime(message.createdAt)}</span>
-            {mine && !message.deletedAt ? (
-              <Tick status={receiptStatus(message, { currentUserId, members, receipts })} />
+        {!mine && isGroup ? (
+          <UserAvatar person={sender} className="mt-1 size-7" fallbackClassName="text-[10px]" />
+        ) : null}
+        {mine ? (
+          <MessageActions
+            message={message}
+            currentUserId={currentUserId}
+            isGroup={isGroup}
+            conversationType={conversationType}
+            align="end"
+          />
+        ) : null}
+        <div className={cn('flex min-w-0 max-w-[min(32rem,85%)] flex-col', mine ? 'items-end' : 'items-start')}>
+          <div
+            className={cn(
+              'w-full rounded-lg px-2.5 py-1.5 text-sm shadow-xs',
+              highlight && 'ring-2 ring-primary/50',
+              message.deletedAt
+                ? 'bg-muted italic text-muted-foreground'
+                : mine
+                  ? 'rounded-tr-none bg-primary text-primary-foreground'
+                  : 'rounded-tl-none bg-card',
+            )}
+          >
+            {!mine && isGroup ? (
+              <p className="mb-0.5 text-xs font-semibold text-emerald-700">{sender?.displayName}</p>
             ) : null}
-            {message.pending ? <span>sending</span> : null}
+            {quoted || message.replyToMessageId ? (
+              <div
+                className="mb-1 rounded-sm border-l-2 border-current/40 bg-black/5 px-2 py-1 text-xs opacity-80"
+                data-testid="message-quote"
+              >
+                <p className="font-semibold">{quoted?.senderName || 'Message'}</p>
+                <p className="truncate">{quoted ? previewText(quoted) : 'Replying to a message'}</p>
+              </div>
+            ) : null}
+            {message.forwardedFromMessageId ? (
+              <p className="mb-1 flex items-center gap-1 text-[11px] uppercase tracking-wide opacity-70">
+                <Forward className="size-3" /> Forwarded
+              </p>
+            ) : null}
+            {message.deletedAt ? (
+              <p className="whitespace-pre-wrap break-words" data-testid="message-body">
+                This message was deleted
+              </p>
+            ) : message.attachment ? (
+              <AttachmentMedia attachment={message.attachment} caption={message.content} mine={mine} />
+            ) : (
+              <p className="whitespace-pre-wrap break-words" data-testid="message-body">
+                {message.content}
+              </p>
+            )}
+            <div className={cn('mt-0.5 flex items-center justify-end gap-1 text-[11px] leading-none', mine ? 'opacity-80' : 'text-muted-foreground')}>
+              {message.editedAt ? <span>edited</span> : null}
+              <span>{formatMessageTime(message.createdAt)}</span>
+              {message.expiresAt ? (
+                <span title={`Expires ${formatDateSeparator(message.expiresAt)}`} data-testid="message-expiry">
+                  · expires {formatMessageTime(message.expiresAt)}
+                </span>
+              ) : null}
+              {mine && !message.deletedAt ? (
+                <Tick status={receiptStatus(message, { currentUserId, members, receipts })} />
+              ) : null}
+              {message.pending ? <span>sending</span> : null}
+            </div>
           </div>
+          <ReactionChips message={message} currentUserId={currentUserId} mine={mine} />
         </div>
-        {!message.deletedAt && (message.messageType === 'text' || message.attachment) ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="size-7 opacity-60" aria-label="Message actions">
-                <MoreHorizontal className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align={mine ? 'end' : 'start'}>
-              <DropdownMenuItem onClick={() => replyTo(message)}>
-                <CornerUpLeft /> Reply
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setForwarding(message)}>
-                <Forward /> Forward
-              </DropdownMenuItem>
-              {mutable && message.messageType === 'text' ? (
-                <DropdownMenuItem onClick={() => setEditing(message)}>
-                  <Pencil /> Edit
-                </DropdownMenuItem>
-              ) : null}
-              {mutable ? (
-                <DropdownMenuItem
-                  variant="destructive"
-                  onClick={async () => {
-                    try {
-                      const updated = await messagesApi.remove(message.id)
-                      queryClient.setQueryData(queryKeys.messages(message.conversationId), (current) => ({
-                        ...current,
-                        data: upsertMessage(current?.data ?? [], updated),
-                      }))
-                    } catch (error) {
-                      toast.error(getErrorMessage(error))
-                    }
-                  }}
-                >
-                  <Trash2 /> Delete
-                </DropdownMenuItem>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
+        {!mine ? (
+          <MessageActions
+            message={message}
+            currentUserId={currentUserId}
+            isGroup={isGroup}
+            conversationType={conversationType}
+            align="start"
+          />
         ) : null}
       </div>
     </div>
   )
 }
 
-function Composer({ conversationId, apiRef }) {
+function Composer({ conversationId, apiRef, canSend = true }) {
   const { user } = useAuth()
   const queryClient = useQueryClient()
   const replyTo = useUiStore((state) => state.replyTo)
@@ -207,9 +210,13 @@ function Composer({ conversationId, apiRef }) {
   const setEmojiOpen = useUiStore((state) => state.setEmojiOpen)
   const [text, setText] = useState(editing?.content ?? '')
   const [uploads, setUploads] = useState([])
+  const [mediaQuality, setMediaQuality] = useState('auto')
   const typingRef = useRef(null)
   const inputRef = useRef(null)
   const fileRef = useRef(null)
+  const voiceRef = useRef(null)
+  const [recording, setRecording] = useState(false)
+  const [recordSeconds, setRecordSeconds] = useState(0)
 
   function emitTyping(start) {
     websocketManager.send({
@@ -244,6 +251,7 @@ function Composer({ conversationId, apiRef }) {
     }
 
     const clientMessageId = crypto.randomUUID()
+    const quoted = replyTo
     const optimistic = {
       id: clientMessageId,
       conversationId,
@@ -253,12 +261,23 @@ function Composer({ conversationId, apiRef }) {
       messageType: 'text',
       createdAt: new Date().toISOString(),
       pending: true,
-      replyToMessageId: replyTo?.id,
+      replyToMessageId: quoted?.id,
+      replyTo: quoted
+        ? {
+            id: quoted.id,
+            senderId: quoted.senderId,
+            senderName: quoted.senderName,
+            content: quoted.content,
+            messageType: quoted.messageType,
+            deletedAt: quoted.deletedAt,
+          }
+        : null,
     }
     queryClient.setQueryData(queryKeys.messages(conversationId), (current) => ({
       ...current,
       data: upsertMessage(current?.data ?? [], optimistic),
     }))
+    touchConversationFromMessage(conversationId, optimistic)
     setText('')
     setReplyTo(null)
     emitTyping(false)
@@ -266,12 +285,13 @@ function Composer({ conversationId, apiRef }) {
       const saved = await messagesApi.create(conversationId, {
         clientMessageId,
         content,
-        replyToMessageId: replyTo?.id,
+        replyToMessageId: quoted?.id,
       })
       queryClient.setQueryData(queryKeys.messages(conversationId), (current) => ({
         ...current,
         data: upsertMessage(current?.data ?? [], saved),
       }))
+      touchConversationFromMessage(conversationId, saved)
     } catch (error) {
       queryClient.setQueryData(queryKeys.messages(conversationId), (current) => ({
         ...current,
@@ -282,6 +302,7 @@ function Composer({ conversationId, apiRef }) {
   }
 
   async function startUpload(file, previousId) {
+    if (!canSend) return
     const id = previousId ?? crypto.randomUUID()
     const controller = new AbortController()
     setUploads((current) => [
@@ -294,15 +315,18 @@ function Composer({ conversationId, apiRef }) {
         file,
         caption: String(inputRef.current?.value ?? text).trim(),
         replyToMessageId: replyTo?.id,
+        quality: mediaQuality,
         signal: controller.signal,
         onProgress: (progress) => {
-          setUploads((current) => current.map((item) => (item.id === id ? { ...item, progress } : item)))
+          const next = typeof progress === 'number' ? { percent: progress } : progress
+          setUploads((current) => current.map((item) => (item.id === id ? { ...item, ...next, progress: next.percent ?? 0 } : item)))
         },
       })
       queryClient.setQueryData(queryKeys.messages(conversationId), (current) => ({
         ...current,
         data: upsertMessage(current?.data ?? [], saved),
       }))
+      touchConversationFromMessage(conversationId, saved)
       setUploads((current) => current.filter((item) => item.id !== id))
       setText('')
       setReplyTo(null)
@@ -320,15 +344,54 @@ function Composer({ conversationId, apiRef }) {
     if (apiRef) apiRef.current = { upload: startUpload }
   })
 
+  useEffect(() => () => voiceRef.current?.cancel(), [])
+
+  useEffect(() => {
+    if (!recording) return undefined
+    const timer = window.setInterval(() => setRecordSeconds((value) => value + 1), 1000)
+    return () => window.clearInterval(timer)
+  }, [recording])
+
+  async function toggleVoice() {
+    if (recording) {
+      const session = voiceRef.current
+      voiceRef.current = null
+      setRecording(false)
+      setRecordSeconds(0)
+      try {
+        const file = await session?.stop()
+        if (file) await startUpload(file)
+      } catch (error) {
+        toast.error(getErrorMessage(error))
+      }
+      return
+    }
+    try {
+      voiceRef.current = await startVoiceRecording()
+      setRecordSeconds(0)
+      setRecording(true)
+    } catch (error) {
+      toast.error(getErrorMessage(error) || 'Microphone access is required to send audio')
+    }
+  }
+
+  function cancelVoice() {
+    voiceRef.current?.cancel()
+    voiceRef.current = null
+    setRecording(false)
+    setRecordSeconds(0)
+  }
+
   return (
     <div
-      className="border-t bg-card p-3"
+      className="bg-muted/50 px-3 py-2"
       onDragOver={(event) => {
         event.preventDefault()
         event.dataTransfer.dropEffect = 'copy'
       }}
       onDrop={(event) => {
         event.preventDefault()
+        if (!canSend) return
         const file = event.dataTransfer.files?.[0]
         if (file) startUpload(file)
       }}
@@ -341,7 +404,12 @@ function Composer({ conversationId, apiRef }) {
           onRetry={(row) => startUpload(row.file, row.id)}
         />
       ))}
-      {replyTo || editing ? (
+      {!canSend ? (
+        <div className="border-t bg-card px-4 py-3 text-center text-sm text-muted-foreground" data-testid="admins-only-composer">
+          Only group admins can send messages.
+        </div>
+      ) : null}
+      {canSend && (replyTo || editing) ? (
         <div className="mb-2 flex items-center justify-between rounded-md bg-muted px-3 py-2 text-xs">
           <span>{editing ? 'Editing message' : `Replying to ${replyTo?.content?.slice(0, 80) ?? 'a message'}`}</span>
           <Button
@@ -357,6 +425,7 @@ function Composer({ conversationId, apiRef }) {
           </Button>
         </div>
       ) : null}
+      {canSend ? (
       <form
         className="flex items-end gap-2"
         onSubmit={(event) => {
@@ -376,39 +445,82 @@ function Composer({ conversationId, apiRef }) {
             if (file) startUpload(file)
           }}
         />
-        <Button type="button" size="icon" variant="ghost" aria-label="Attach file" onClick={() => fileRef.current?.click()}>
-          <Paperclip />
-        </Button>
+        {recording ? (
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-[28px] border bg-card px-3 py-2 shadow-xs">
+            <span className="size-2.5 animate-pulse rounded-full bg-destructive" />
+            <span className="text-sm font-medium">
+              {`${String(Math.floor(recordSeconds / 60)).padStart(2, '0')}:${String(recordSeconds % 60).padStart(2, '0')}`}
+            </span>
+            <Button type="button" size="sm" variant="ghost" className="ml-auto" onClick={cancelVoice}>
+              Cancel
+            </Button>
+          </div>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-end rounded-[28px] border bg-card px-1.5 py-1 shadow-xs">
+            <AttachMenu disabled={!canSend} onPick={startUpload} />
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="size-9 shrink-0 rounded-full"
+              aria-label="Record audio"
+              data-testid="record-audio"
+              onClick={toggleVoice}
+            >
+              <Mic />
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="size-9 shrink-0 rounded-full"
+              aria-label="Emoji"
+              onClick={() => setEmojiOpen(!emojiOpen)}
+            >
+              <Smile />
+            </Button>
+            <Textarea
+              ref={inputRef}
+              value={text}
+              onChange={(event) => onChange(event.target.value)}
+              onInput={(event) => onChange(event.target.value)}
+              placeholder="Type a message"
+              aria-label="Message"
+              data-testid="message-composer"
+              className="min-h-9 max-h-40 flex-1 resize-none border-0 bg-transparent px-1 py-2 shadow-none focus-visible:ring-0"
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault()
+                  send()
+                }
+              }}
+            />
+            <select
+              aria-label="Media quality"
+              className="mr-1 hidden max-w-24 bg-transparent text-[11px] text-muted-foreground sm:block"
+              value={mediaQuality}
+              onChange={(event) => setMediaQuality(event.target.value)}
+            >
+              <option value="auto">Auto</option>
+              <option value="high">High</option>
+              <option value="data-saver">Saver</option>
+              <option value="original">Original</option>
+            </select>
+          </div>
+        )}
         <Button
           type="button"
           size="icon"
-          variant="ghost"
-          aria-label="Emoji"
-          onClick={() => setEmojiOpen(!emojiOpen)}
+          className="size-11 shrink-0 rounded-full"
+          aria-label={recording ? 'Send audio' : 'Send message'}
+          data-testid="send-message"
+          onClick={recording ? toggleVoice : send}
         >
-          <Smile />
-        </Button>
-        <Textarea
-          ref={inputRef}
-          value={text}
-          onChange={(event) => onChange(event.target.value)}
-          onInput={(event) => onChange(event.target.value)}
-          placeholder="Type a message"
-          aria-label="Message"
-          data-testid="message-composer"
-          className="min-h-11 max-h-40 flex-1 resize-none"
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault()
-              send()
-            }
-          }}
-        />
-        <Button type="button" size="icon" aria-label="Send message" data-testid="send-message" onClick={send}>
           <Send />
         </Button>
       </form>
-      {emojiOpen ? (
+      ) : null}
+      {canSend && emojiOpen ? (
         <div className="absolute bottom-24 left-4 z-20 md:left-auto">
           <Suspense fallback={null}>
             <EmojiPicker
@@ -426,188 +538,246 @@ function Composer({ conversationId, apiRef }) {
   )
 }
 
-function GroupPanel({ conversation, open, onOpenChange }) {
-  const { user } = useAuth()
+const BOTTOM_THRESHOLD = 80
+
+function scrollerAtBottom(node) {
+  if (!node) return true
+  return node.scrollHeight - node.scrollTop - node.clientHeight <= BOTTOM_THRESHOLD
+}
+
+function MessageThread({
+  conversationId,
+  messages,
+  members,
+  receipts,
+  lastMessageSeq = 0,
+  retentionDays = 90,
+  currentUserId,
+  isGroup,
+  conversationType,
+  unreadCount = 0,
+  searchQuery = '',
+}) {
   const queryClient = useQueryClient()
-  const navigate = useNavigate()
-  const [search, setSearch] = useState('')
-  const role = memberRole(conversation?.members, user?.id)
-  const directory = useQuery({
-    queryKey: queryKeys.directory({ search, page: 1, limit: 20 }),
-    queryFn: () => usersApi.directory({ search, page: 1, limit: 20 }),
-    enabled: open && canManageGroup(role),
-  })
+  const scrollerRef = useRef(null)
+  const atBottomRef = useRef(true)
+  const readyRef = useRef(false)
+  const loadingOlderRef = useRef(false)
+  const restoreRef = useRef(null)
+  const primedRef = useRef(false)
+  const newestSeenRef = useRef(0)
+  const [atBottom, setAtBottom] = useState(true)
+  const [newWhileAway, setNewWhileAway] = useState(0)
+  const deliveredRef = useRef(new Set())
+  const lastReadRef = useRef(0)
 
-  function patchMembers(updater) {
-    queryClient.setQueryData(queryKeys.conversation(conversation.id), (current) => {
-      if (!current?.members) return current
-      return { ...current, members: updater(current.members) }
+  function markAtBottom(isAtBottom) {
+    atBottomRef.current = isAtBottom
+    setAtBottom(isAtBottom)
+    if (isAtBottom) setNewWhileAway(0)
+  }
+
+  function scrollToLatest(behavior = 'smooth') {
+    const node = scrollerRef.current
+    if (!node) return
+    node.scrollTo({ top: node.scrollHeight, behavior })
+    markAtBottom(true)
+  }
+
+  const hasMessages = messages.length > 0
+
+  useLayoutEffect(() => {
+    const node = scrollerRef.current
+    if (!node || !hasMessages) return
+
+    const restore = restoreRef.current
+    if (restore) {
+      node.scrollTop = restore.top + (node.scrollHeight - restore.height)
+      restoreRef.current = null
+      markAtBottom(scrollerAtBottom(node))
+      return
+    }
+
+    const last = messages[messages.length - 1]
+    const stick =
+      !readyRef.current ||
+      atBottomRef.current ||
+      last?.senderId === currentUserId ||
+      last?.pending
+    if (stick) {
+      node.scrollTop = node.scrollHeight
+      markAtBottom(true)
+    }
+    readyRef.current = true
+  }, [conversationId, currentUserId, hasMessages, messages])
+
+  useEffect(() => {
+    const node = scrollerRef.current
+    if (!node || !hasMessages) return undefined
+    const observer = new ResizeObserver(() => {
+      if (atBottomRef.current) node.scrollTop = node.scrollHeight
     })
+    observer.observe(node)
+    if (node.firstElementChild) observer.observe(node.firstElementChild)
+    return () => observer.disconnect()
+  }, [hasMessages])
+
+  useEffect(() => {
+    const incoming = messages.filter(
+      (message) =>
+        message.senderId &&
+        message.senderId !== currentUserId &&
+        !message.deletedAt &&
+        !message.pending &&
+        !deliveredRef.current.has(message.id),
+    )
+    incoming.forEach((message) => {
+      deliveredRef.current.add(message.id)
+      websocketManager.send({ event: 'message.delivered', data: { messageId: message.id } })
+    })
+
+    const newest = newestSequence(messages)
+    if (!primedRef.current) {
+      primedRef.current = true
+      newestSeenRef.current = newest
+    } else if (newest > newestSeenRef.current) {
+      const fresh = messages.filter(
+        (message) =>
+          Number(message.sequenceNumber ?? 0) > newestSeenRef.current &&
+          message.senderId &&
+          message.senderId !== currentUserId &&
+          !message.pending,
+      )
+      if (!atBottomRef.current && fresh.length) {
+        setNewWhileAway((count) => count + fresh.length)
+      }
+      newestSeenRef.current = newest
+    }
+
+    if (!atBottomRef.current) return
+    if (newest > lastReadRef.current) {
+      lastReadRef.current = newest
+      conversationsApi.read(conversationId, newest).catch(() => {})
+      websocketManager.send({
+        event: 'conversation.read',
+        data: { conversationId, sequenceNumber: newest },
+      })
+      queryClient.setQueryData(queryKeys.conversations, (current) => {
+        if (!current?.data) return current
+        if (current.data.every((row) => row.id !== conversationId || row.unreadCount === 0)) return current
+        return {
+          ...current,
+          data: current.data.map((row) => (row.id === conversationId ? { ...row, unreadCount: 0 } : row)),
+        }
+      })
+    }
+  }, [atBottom, conversationId, currentUserId, messages, queryClient])
+
+  async function loadOlder() {
+    if (!readyRef.current || loadingOlderRef.current) return
+    const oldest = oldestSequence(messages)
+    if (!oldest || oldest <= 1) return
+    loadingOlderRef.current = true
+    const node = scrollerRef.current
+    if (node) restoreRef.current = { height: node.scrollHeight, top: node.scrollTop }
+    try {
+      const page = await messagesApi.list(conversationId, {
+        afterSeq: Math.max(0, oldest - 51),
+        limit: 50,
+      })
+      const incoming = page.data ?? []
+      queryClient.setQueryData(queryKeys.messages(conversationId), (current) => ({
+        ...current,
+        data: incoming.reduce((list, message) => upsertMessage(list, message), current?.data ?? []),
+      }))
+    } finally {
+      loadingOlderRef.current = false
+    }
   }
 
-  async function refresh() {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.conversation(conversation.id) }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.group(conversation.id) }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.conversations }),
-    ])
+  function onScroll(event) {
+    const node = event.currentTarget
+    const isBottom = scrollerAtBottom(node)
+    markAtBottom(isBottom)
+    if (readyRef.current && node.scrollTop < BOTTOM_THRESHOLD) void loadOlder()
   }
+
+  if (messages.length === 0) {
+    return lastMessageSeq > 0 ? (
+      <EmptyState title="Older messages were removed" description={retentionCopy(retentionDays)} />
+    ) : (
+      <EmptyState title="No messages yet" description="Say hello to start this conversation." />
+    )
+  }
+
+  const unseenCount = newWhileAway > 0 ? newWhileAway : atBottom ? 0 : unreadCount
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="z-[60] w-full sm:max-w-md">
-        <SheetHeader>
-          <SheetTitle>{conversation?.title || 'Group'}</SheetTitle>
-        </SheetHeader>
-        <div className="h-[calc(100vh-8rem)] overflow-y-auto pr-4">
-          <div className="space-y-4 p-1">
-            {(conversation?.members ?? []).map((member) => (
-              <div
-                key={member.id}
-                className="flex flex-wrap items-center justify-between gap-2"
-                data-testid="group-member"
-                data-member-role={member.role}
-              >
-                <div className="flex min-w-0 items-center gap-2">
-                  <UserAvatar name={member.displayName} />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{member.displayName}</p>
-                    <p className="text-xs capitalize text-muted-foreground">{member.role}</p>
-                  </div>
-                </div>
-                {canManageGroup(role) && member.id !== user.id && member.role !== 'owner' ? (
-                  <div className="flex flex-wrap justify-end gap-1">
-                    {role === 'owner' ? (
-                      <button
-                        type="button"
-                        data-testid={member.role === 'admin' ? 'member-demote' : 'member-promote'}
-                        className="inline-flex h-8 items-center rounded-md border bg-background px-3 text-sm shadow-xs hover:bg-accent"
-                        onClick={async () => {
-                          const nextRole = member.role === 'admin' ? 'member' : 'admin'
-                          try {
-                            await groupsApi.setRole(conversation.id, member.id, nextRole)
-                            patchMembers((members) =>
-                              members.map((row) => (row.id === member.id ? { ...row, role: nextRole } : row)),
-                            )
-                            await refresh()
-                          } catch (error) {
-                            toast.error(getErrorMessage(error))
-                          }
-                        }}
-                      >
-                        {member.role === 'admin' ? 'Demote' : 'Promote'}
-                      </button>
-                    ) : null}
-                    {role === 'owner' && member.role !== 'owner' ? (
-                      <button
-                        type="button"
-                        data-testid="member-make-owner"
-                        className="inline-flex h-8 items-center rounded-md border bg-background px-3 text-sm shadow-xs hover:bg-accent"
-                        onClick={async () => {
-                          try {
-                            await groupsApi.transferOwner(conversation.id, member.id)
-                            patchMembers((members) =>
-                              members.map((row) => {
-                                if (row.id === member.id) return { ...row, role: 'owner' }
-                                if (row.role === 'owner') return { ...row, role: 'admin' }
-                                return row
-                              }),
-                            )
-                            await refresh()
-                          } catch (error) {
-                            toast.error(getErrorMessage(error))
-                          }
-                        }}
-                      >
-                        Make owner
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      data-testid="member-remove"
-                      className="inline-flex h-8 items-center rounded-md px-3 text-sm hover:bg-muted"
-                      onClick={async () => {
-                        try {
-                          await groupsApi.removeMember(conversation.id, member.id)
-                          patchMembers((members) => members.filter((row) => row.id !== member.id))
-                          await refresh()
-                        } catch (error) {
-                          toast.error(getErrorMessage(error))
-                        }
-                      }}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            ))}
-            {canManageGroup(role) ? (
-              <div>
-                <p className="mb-2 text-sm font-medium">Add member</p>
-                <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search employees" />
-                <div className="mt-2 space-y-1">
-                  {(directory.data?.data ?? [])
-                    .filter((person) => !conversation.members?.some((member) => member.id === person.id))
-                    .map((person) => (
-                      <button
-                        key={person.id}
-                        type="button"
-                        data-testid="add-member"
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
-                        onClick={async () => {
-                          try {
-                            await groupsApi.addMember(conversation.id, person.id)
-                            await refresh()
-                          } catch (error) {
-                            toast.error(getErrorMessage(error))
-                          }
-                        }}
-                      >
-                        <UserAvatar name={person.displayName} />
-                        <span className="text-sm">{person.displayName}</span>
-                      </button>
-                    ))}
-                </div>
-              </div>
-            ) : null}
-            {role && role !== 'owner' ? (
-              <button
-                type="button"
-                data-testid="leave-group"
-                className="inline-flex h-9 items-center rounded-md bg-destructive px-4 text-sm text-white"
-                onClick={async () => {
-                  try {
-                    await groupsApi.leave(conversation.id)
-                    onOpenChange(false)
-                    navigate('/')
-                  } catch (error) {
-                    toast.error(getErrorMessage(error))
-                  }
-                }}
-              >
-                Leave group
-              </button>
-            ) : null}
-          </div>
+    <div className="relative h-full min-h-0">
+      <div
+        ref={scrollerRef}
+        className="h-full min-h-0 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]"
+        data-testid="message-scroller"
+        onScroll={onScroll}
+      >
+        <div className="flex min-h-full flex-col justify-end">
+          {messages.map((message, index) => (
+            <MessageBubble
+              key={message.id}
+              message={message}
+              previous={messages[index - 1]}
+              members={members}
+              receipts={receipts}
+              currentUserId={currentUserId}
+              isGroup={isGroup}
+              conversationType={conversationType}
+              highlight={Boolean(
+                searchQuery &&
+                  String(message.content || '')
+                    .toLowerCase()
+                    .includes(searchQuery.toLowerCase()),
+              )}
+            />
+          ))}
+          <div className="h-4 shrink-0" aria-hidden="true" />
         </div>
-      </SheetContent>
-    </Sheet>
+      </div>
+      {!atBottom ? (
+        <Button
+          type="button"
+          size="sm"
+          className="absolute right-4 bottom-4 z-20 gap-1 rounded-full shadow-md"
+          data-testid="jump-to-latest"
+          aria-label={unseenCount > 0 ? `${unseenCount} new messages` : 'Jump to latest messages'}
+          onClick={() => scrollToLatest('smooth')}
+        >
+          <ArrowDown className="size-4" />
+          {unseenCount > 0 ? (
+            <span data-testid="new-message-count">{unseenCount > 99 ? '99+' : unseenCount}</span>
+          ) : null}
+        </Button>
+      ) : null}
+    </div>
   )
 }
 
 export function MessagePane({ conversationId }) {
   const { user } = useAuth()
-  const queryClient = useQueryClient()
+  const { closeChat } = useWorkspace()
   const groupPanelOpen = useUiStore((state) => state.groupPanelOpen)
   const setGroupPanelOpen = useUiStore((state) => state.setGroupPanelOpen)
+  const setAddMembersOpen = useUiStore((state) => state.setAddMembersOpen)
   const forwarding = useUiStore((state) => state.forwardingMessage)
   const setForwarding = useUiStore((state) => state.setForwardingMessage)
+  const replyTo = useUiStore((state) => state.replyTo)
+  const setReplyTo = useUiStore((state) => state.setReplyTo)
   const editing = useUiStore((state) => state.editingMessage)
   const typingIds = useTypingStore((state) => state.byConversation[conversationId] || EMPTY_IDS)
   const onlineMap = usePresenceStore((state) => state.online)
   const composerApi = useRef(null)
   const [dropping, setDropping] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [messageQuery, setMessageQuery] = useState('')
 
   const details = useQuery({
     queryKey: queryKeys.conversation(conversationId),
@@ -633,56 +803,32 @@ export function MessagePane({ conversationId }) {
   })
 
   const messages = useMemo(
-    () => sortMessages(messagesQuery.data?.data ?? []),
+    () => sortMessages(visibleMessages(messagesQuery.data?.data ?? [])),
     [messagesQuery.data],
   )
-  const deliveredRef = useRef(new Set())
-  const lastReadRef = useRef(0)
-
-  useEffect(() => {
-    deliveredRef.current = new Set()
-    lastReadRef.current = 0
-  }, [conversationId])
-
-  useEffect(() => {
-    const incoming = messages.filter(
-      (message) =>
-        message.senderId &&
-        message.senderId !== user?.id &&
-        !message.deletedAt &&
-        !message.pending &&
-        !deliveredRef.current.has(message.id),
-    )
-    incoming.forEach((message) => {
-      deliveredRef.current.add(message.id)
-      websocketManager.send({ event: 'message.delivered', data: { messageId: message.id } })
-    })
-    const newest = newestSequence(messages)
-    if (newest > lastReadRef.current) {
-      lastReadRef.current = newest
-      conversationsApi.read(conversationId, newest).catch(() => {})
-      websocketManager.send({
-        event: 'conversation.read',
-        data: { conversationId, sequenceNumber: newest },
-      })
-      queryClient.setQueryData(queryKeys.conversations, (current) => {
-        if (!current?.data) return current
-        if (current.data.every((row) => row.id !== conversationId || row.unreadCount === 0)) return current
-        return {
-          ...current,
-          data: current.data.map((row) => (row.id === conversationId ? { ...row, unreadCount: 0 } : row)),
-        }
-      })
-    }
-  }, [conversationId, messages, queryClient, user?.id])
+  const retention = useQuery({
+    queryKey: queryKeys.conversationRetention(conversationId),
+    queryFn: () => retentionApi.conversation(conversationId),
+  })
 
   const conversationList = useQuery({
     queryKey: queryKeys.conversations,
-    queryFn: () => conversationsApi.list({ limit: 50 }),
+    queryFn: () => conversationsApi.list({ limit: 100 }),
   })
+
+  useEffect(() => {
+    if (!replyTo || !details.data) return
+    if (replyTo.conversationId === conversationId) return
+    const peerId = conversationPeer(details.data, user?.id)?.id
+    if (details.data.type === 'direct' && peerId === replyTo.senderId) return
+    setReplyTo(null)
+  }, [conversationId, details.data, replyTo, setReplyTo, user?.id])
 
   const title = conversationTitle(details.data, user?.id)
   const peer = conversationPeer(details.data, user?.id)
+  const isGroup = details.data?.type === 'group'
+  const role = memberRole(details.data?.members, user?.id)
+  const canSend = !isGroup || canSendGroupMessages(role, groupSettings(details.data))
   const typingNames = typingIds
     .filter((id) => id !== user?.id)
     .map((id) => details.data?.members?.find((member) => member.id === id)?.displayName)
@@ -705,7 +851,7 @@ export function MessagePane({ conversationId }) {
 
   return (
     <section
-      className="relative flex h-full min-w-0 flex-1 flex-col bg-[linear-gradient(180deg,oklch(0.98_0.01_92),oklch(0.96_0.012_90))]"
+      className="chat-wallpaper relative flex h-full min-h-0 min-w-0 flex-1 flex-col"
       data-testid="message-pane"
       onDragOver={(event) => {
         event.preventDefault()
@@ -716,67 +862,127 @@ export function MessagePane({ conversationId }) {
         event.preventDefault()
         setDropping(false)
         const file = event.dataTransfer.files?.[0]
-        if (file) composerApi.current?.upload(file)
+        if (file && canSend) composerApi.current?.upload(file)
       }}
     >
-      <header className="flex h-16 items-center justify-between gap-3 border-b bg-card/90 px-3 backdrop-blur">
-        <div className="flex min-w-0 items-center gap-3">
-          <Button variant="ghost" size="icon" className="md:hidden" asChild aria-label="Back to chats">
-            <Link to="/">
-              <ArrowLeft />
-            </Link>
+      <header className="flex h-16 items-center justify-between gap-2 border-b bg-card px-2 shadow-xs md:px-3">
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <Button variant="ghost" size="icon" className="md:hidden" aria-label="Back to chats" onClick={() => closeChat()}>
+            <ArrowLeft />
           </Button>
-          <UserAvatar name={title} online={Boolean(onlineMap[peer?.id])} />
-          <div className="min-w-0">
-            <p className="truncate font-semibold">{title}</p>
-            <p className="truncate text-xs text-muted-foreground" data-testid="chat-subtitle">
-              {typingNames.length
-                ? `${typingNames.join(', ')} typing…`
-                : details.data?.type === 'group'
-                  ? `${details.data.members?.length ?? 0} members`
-                  : onlineMap[peer?.id]
-                    ? 'Online'
-                    : 'Offline'}
-            </p>
-          </div>
-        </div>
-        {details.data?.type === 'group' ? (
-          <Button variant="ghost" size="icon" aria-label="Group info" onClick={() => setGroupPanelOpen(true)}>
-            <Info />
-          </Button>
-        ) : null}
-      </header>
-      <div className="min-h-0 flex-1">
-        {messages.length === 0 ? (
-          <EmptyState title="No messages yet" description="Say hello to start this conversation." />
-        ) : (
-          <Virtuoso
-            data={messages}
-            followOutput="smooth"
-            startReached={async () => {
-              const oldest = oldestSequence(messages)
-              if (!oldest || oldest <= 1) return
-              const page = await messagesApi.list(conversationId, {
-                afterSeq: Math.max(0, oldest - 51),
-                limit: 50,
-              })
-              queryClient.setQueryData(queryKeys.messages(conversationId), (current) => ({
-                ...current,
-                data: (page.data ?? []).reduce((list, message) => upsertMessage(list, message), current?.data ?? []),
-              }))
-            }}
-            itemContent={(index, message) => (
-              <MessageBubble
-                message={message}
-                previous={messages[index - 1]}
-                members={details.data?.members ?? []}
-                receipts={receipts.data ?? []}
-                currentUserId={user.id}
-                isGroup={details.data?.type === 'group'}
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-1 py-1 text-left hover:bg-muted/70"
+            aria-label={isGroup ? 'Group info' : 'Contact info'}
+            onClick={() => setGroupPanelOpen(true)}
+          >
+            {isGroup ? (
+              <UserAvatar
+                variant="group"
+                userId={conversationId}
+                name={title}
+                hasPhoto={details.data?.hasAvatar}
+                photoVersion={details.data?.avatarVersion}
               />
+            ) : (
+              <UserAvatar person={peer} name={title} online={Boolean(onlineMap[peer?.id])} />
             )}
+            <div className="min-w-0">
+              <p className="truncate font-semibold">{title}</p>
+              <p className="truncate text-xs text-muted-foreground" data-testid="chat-subtitle">
+                {typingNames.length
+                  ? `${typingNames.join(', ')} typing…`
+                  : isGroup
+                    ? `${details.data.members?.length ?? 0} members`
+                    : onlineMap[peer?.id]
+                      ? 'Online'
+                      : 'Offline'}
+              </p>
+            </div>
+          </button>
+        </div>
+        <div className="flex items-center">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Search messages"
+            onClick={() => setSearchOpen((value) => !value)}
+          >
+            {searchOpen ? <X /> : <Search />}
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label="Chat menu">
+                <MoreVertical />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              {isGroup && canAddGroupMembers(role, groupSettings(details.data)) ? (
+                <DropdownMenuItem onClick={() => setAddMembersOpen(true)}>
+                  <UserPlus /> Add member
+                </DropdownMenuItem>
+              ) : null}
+              <DropdownMenuItem onClick={() => setGroupPanelOpen(true)}>
+                <Info /> {isGroup ? 'Group info' : 'Contact info'}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  setSearchOpen(true)
+                }}
+              >
+                <Search /> Search
+              </DropdownMenuItem>
+              {isGroup && role && role !== 'owner' ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={async () => {
+                      try {
+                        await groupsApi.leave(conversationId)
+                        closeChat()
+                      } catch (error) {
+                        toast.error(getErrorMessage(error))
+                      }
+                    }}
+                  >
+                    <LogOut /> Exit group
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </header>
+      {searchOpen ? (
+        <div className="border-b bg-card px-3 py-2">
+          <Input
+            autoFocus
+            value={messageQuery}
+            onChange={(event) => setMessageQuery(event.target.value)}
+            placeholder="Search messages"
+            aria-label="Search messages"
           />
-        )}
+        </div>
+      ) : null}
+      <RetentionBanner conversationId={conversationId} />
+      <div className="min-h-0 flex-1">
+        <MessageThread
+          key={conversationId}
+          conversationId={conversationId}
+          messages={messages}
+          members={details.data?.members ?? []}
+          receipts={receipts.data ?? []}
+          currentUserId={user.id}
+          isGroup={isGroup}
+          conversationType={details.data?.type}
+          lastMessageSeq={details.data?.lastMessageSeq ?? 0}
+          retentionDays={retention.data?.retentionDays ?? 90}
+          searchQuery={messageQuery}
+          unreadCount={
+            conversationList.data?.data?.find((row) => row.id === conversationId)?.unreadCount ?? 0
+          }
+        />
       </div>
       {dropping ? (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-primary/10 text-sm font-medium">
@@ -787,10 +993,12 @@ export function MessagePane({ conversationId }) {
         key={editing?.id ?? `compose-${conversationId}`}
         conversationId={conversationId}
         apiRef={composerApi}
+        canSend={canSend}
       />
-      <GroupPanel
+      <ChatInfoPanel
         conversation={details.data}
-        open={groupPanelOpen && details.data?.type === 'group'}
+        messages={messages}
+        open={groupPanelOpen}
         onOpenChange={setGroupPanelOpen}
       />
       <Dialog open={Boolean(forwarding)} onOpenChange={(open) => !open && setForwarding(null)}>

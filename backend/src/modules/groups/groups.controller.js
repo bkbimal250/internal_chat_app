@@ -19,6 +19,32 @@ export const groupsController = (app, config) => {
       await app.broadcaster.conversation(request.params.id, 'conversation.updated', conversation);
       return conversation;
     },
+    updateSettings: async (request) => {
+      const conversation = await service.updateSettings(request.params.id, request.auth.userId, request.body, {
+        userId: request.auth.userId,
+        sessionId: request.auth.sessionId,
+        ip: request.ip,
+      });
+      await app.broadcaster.conversation(request.params.id, 'conversation.updated', conversation);
+      return conversation;
+    },
+    initPhoto: (request) => service.initPhoto(request.params.id, request.auth.userId, request.body.mimeType),
+    completePhoto: async (request) => {
+      const conversation = await service.completePhoto(
+        request.params.id,
+        request.auth.userId,
+        request.body.key,
+        request.body.mimeType,
+      );
+      await app.broadcaster.conversation(request.params.id, 'conversation.updated', conversation);
+      return conversation;
+    },
+    removePhoto: async (request) => {
+      const conversation = await service.removePhoto(request.params.id, request.auth.userId);
+      await app.broadcaster.conversation(request.params.id, 'conversation.updated', conversation);
+      return conversation;
+    },
+    photoUrl: (request) => service.photoUrl(request.params.id, request.auth.userId),
     add: async (request, reply) => {
       const result = await service.add(request.params.id, request.auth.userId, request.body.userId);
       await app.broadcaster.conversation(request.params.id, 'group.member_added', {

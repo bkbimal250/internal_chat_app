@@ -15,7 +15,12 @@ function isAuthRefreshUrl(url = '') {
 }
 
 function isAuthLoginUrl(url = '') {
-  return url.includes('/api/v1/auth/login')
+  return url.includes('/api/v1/auth/login') || url.includes('/api/v1/auth/otp/')
+}
+
+export function isAuthFailure(error) {
+  const status = error?.status ?? error?.response?.status
+  return status === 401 || status === 403
 }
 
 function attachCommonHeaders(config) {
@@ -67,15 +72,19 @@ export async function refreshAccessToken() {
     refreshPromise = rawClient
       .post('/api/v1/auth/refresh', { clientType: 'web' })
       .then((response) => {
-        applyTokens({
-          accessToken: response.data.accessToken,
-          csrfToken: response.data.csrfToken,
-        })
+        applyTokens(
+          {
+            accessToken: response.data.accessToken,
+            csrfToken: response.data.csrfToken,
+          },
+          response.data,
+        )
         return response.data
       })
       .catch((error) => {
-        clearTokens()
-        throw toApiError(error)
+        const apiError = toApiError(error)
+        if (isAuthFailure(apiError)) clearTokens()
+        throw apiError
       })
       .finally(() => {
         refreshPromise = null
@@ -104,6 +113,7 @@ apiClient.interceptors.response.use(
         const session = await refreshAccessToken()
         original.headers = original.headers ?? {}
         original.headers.Authorization = `Bearer ${session.accessToken}`
+        if (session.csrfToken) original.headers['X-CSRF-Token'] = session.csrfToken
         return apiClient(original)
       } catch (refreshError) {
         return Promise.reject(refreshError)

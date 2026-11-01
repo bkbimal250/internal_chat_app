@@ -1,12 +1,21 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { users } from '../../database/schema/index.js';
 import { hashPassword, temporaryPassword } from '../../services/password.service.js';
+import { normalizePhone } from '../../services/phone.js';
+import { profilePhotoService } from '../../services/profile-photo.service.js';
 import { AppError } from '../../utils/app-error.js';
 import { audit, revokeSessions } from '../auth/auth.repository.js';
 import { activeAdminCount, auditPage, employeePage } from './admin.repository.js';
 
-export function adminService(app) {
+function phonePatch(value) {
+  if (value === undefined) return {};
+  if (value === null || value === '') return { phoneE164: null, phoneVerifiedAt: null };
+  return { phoneE164: normalizePhone(value), phoneVerifiedAt: new Date() };
+}
+
+export function adminService(app, config) {
   const db = app.database.db;
+  const photos = profilePhotoService(app, config);
   const disallowLastAdmin = async (tx, target, change) => {
     if (target.role === 'admin' && target.status === 'active' && change) {
       if ((await activeAdminCount(tx)) <= 1)
@@ -25,7 +34,7 @@ export function adminService(app) {
       return user;
     },
     async create(input, context) {
-      const password = temporaryPassword();
+      const password = input.password || temporaryPassword();
       const passwordHash = await hashPassword(password);
       const user = await db.transaction(async (tx) => {
         const [created] = await tx
@@ -34,10 +43,13 @@ export function adminService(app) {
             employeeCode: input.employeeCode ?? null,
             username: input.username,
             displayName: input.displayName,
+            fullName: input.fullName || input.displayName,
             email: input.email ?? null,
+            address: input.address ?? null,
             passwordHash,
             role: input.role ?? 'user',
             createdBy: context.userId,
+            ...phonePatch(input.phone),
           })
           .returning();
         await audit(tx, context, 'admin.user_created', 'user', created.id, {
@@ -49,10 +61,19 @@ export function adminService(app) {
     },
     async update(id, input, context) {
       const user = await db.transaction(async (tx) => {
-        const target = await this.get(id);
+        const [target] = await tx
+          .select()
+          .from(users)
+          .where(and(eq(users.id, id), isNull(users.deletedAt)))
+          .for('update');
+        if (!target) throw new AppError('Employee not found', 404, 'NOT_FOUND');
+        if (input.role && input.role !== 'admin') {
+          await disallowLastAdmin(tx, target, target.role === 'admin');
+        }
+        const { phone, ...rest } = input;
         const [updated] = await tx
           .update(users)
-          .set({ ...input, updatedAt: new Date() })
+          .set({ ...rest, ...phonePatch(phone), updatedAt: new Date() })
           .where(eq(users.id, target.id))
           .returning();
         await audit(tx, context, 'admin.user_updated', 'user', id, { fields: Object.keys(input) });
@@ -92,8 +113,8 @@ export function adminService(app) {
         });
       return result.user;
     },
-    async resetPassword(id, context) {
-      const password = temporaryPassword();
+    async resetPassword(id, input, context) {
+      const password = input?.password || temporaryPassword();
       const passwordHash = await hashPassword(password);
       const result = await db.transaction(async (tx) => {
         const [target] = await tx
@@ -136,6 +157,77 @@ export function adminService(app) {
         reason: 'admin_revoked',
       });
       return rows.length;
+    },
+    async remove(id, context) {
+      const result = await db.transaction(async (tx) => {
+        const [target] = await tx
+          .select()
+          .from(users)
+          .where(and(eq(users.id, id), isNull(users.deletedAt)))
+          .for('update');
+        if (!target) throw new AppError('Employee not found', 404, 'NOT_FOUND');
+        if (target.id === context.userId) {
+          throw new AppError('Administrators cannot delete their own account', 403, 'CANNOT_DELETE_SELF');
+        }
+        if (target.role !== 'user') {
+          throw new AppError(
+            'Administrators cannot delete other administrators',
+            403,
+            'CANNOT_DELETE_ADMIN',
+          );
+        }
+        const token = target.id.replace(/-/g, '').slice(0, 8);
+        const [user] = await tx
+          .update(users)
+          .set({
+            username: `deleted.${token}`,
+            displayName: 'Deleted employee',
+            fullName: 'Deleted employee',
+            email: null,
+            phoneE164: null,
+            phoneVerifiedAt: null,
+            address: null,
+            employeeCode: null,
+            profilePhotoKey: null,
+            status: 'suspended',
+            deletedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(and(eq(users.id, id), isNull(users.deletedAt)))
+          .returning();
+        if (!user) throw new AppError('Employee not found', 404, 'NOT_FOUND');
+        const sessions = await revokeSessions(tx, id, 'account_deleted');
+        await audit(tx, context, 'admin.user_deleted', 'user', id);
+        return { user, sessions, photoKey: target.profilePhotoKey };
+      });
+      app.sessionEvents.emit('revoked', {
+        sessionIds: result.sessions.map((s) => s.id),
+        reason: 'account_deleted',
+      });
+      for (const userId of app.connections.closeUser(id, 'account_deleted')) {
+        app.broadcaster.presence(userId, false).catch(() =>
+          app.log.warn({ userId }, 'Unable to broadcast offline presence'),
+        );
+      }
+      if (result.photoKey) await app.storage.remove(result.photoKey).catch(() => {});
+      return { success: true };
+    },
+    initPhoto: (id, mimeType) => photos.init(id, mimeType),
+    async completePhoto(id, key, mimeType, context) {
+      const target = await this.get(id);
+      const user = await photos.complete(target.id, key, mimeType);
+      await audit(app.database.db, context, 'admin.user_updated', 'user', id, {
+        fields: ['profilePhotoKey'],
+      });
+      return user;
+    },
+    async removePhoto(id, context) {
+      const target = await this.get(id);
+      const user = await photos.remove(target.id);
+      await audit(app.database.db, context, 'admin.user_updated', 'user', id, {
+        fields: ['profilePhotoKey'],
+      });
+      return user;
     },
   };
 }

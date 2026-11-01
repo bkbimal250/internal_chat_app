@@ -33,6 +33,9 @@ export const messages = pgTable(
     }),
     editedAt: timestamp('edited_at', { withTimezone: true }),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    expiredAt: timestamp('expired_at', { withTimezone: true }),
+    purgedAt: timestamp('purged_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -43,5 +46,6 @@ export const messages = pgTable(
     uniqueIndex('messages_change_unique').on(t.conversationId, t.changeSeq),
     index('messages_history_idx').on(t.conversationId, t.sequenceNumber),
     index('messages_change_idx').on(t.conversationId, t.changeSeq),
+    index('messages_expires_idx').on(t.expiresAt),
   ],
 );

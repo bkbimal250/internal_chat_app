@@ -297,3 +297,23 @@ This folder is not currently a Git repository; no commits were created.
   reactivate, reset, session revoke — passed. ESLint passed.
 - `postgres_data` preserved (users 104 → 110 from isolated ops/e2e accounts).
   Production administrator password was not changed.
+
+## Profile photos and avatars — 30 October 2026
+
+- Employees upload JPEG/PNG/WebP (5 MB) through presigned PUT, then
+  `POST /users/me/photo/complete`. `DELETE /users/me/photo` removes the photo.
+  Administrators use `/admin/users/:id/photo` init/complete/DELETE.
+- `sharp` writes a 256×256 WebP thumbnail. PostgreSQL stores only
+  `profile_photo_key`. `GET /users/:id/photo-url` returns a short-lived
+  authenticated URL. Completing or removing a photo broadcasts `user.updated`.
+- Conversation members and the directory expose `hasProfilePhoto` and
+  `photoVersion` (never the storage key). Non-admins receive 403 on admin photo
+  routes. Magic-byte inspection rejects mismatched types.
+- Isolated Docker suite against `company_chat_test` + `company-chat-test`:
+  **33 passed, 0 failed, 1 skipped** (`LIVE_API_URL`). Includes
+  `profile photos: upload, thumbnail, remove, unauthorized, and realtime sync`.
+- ESLint passed. `api`, `postgres`, and `storage` healthy. `/health/live` 200.
+  `/health/ready` 200 `{"status":"ready","database":"connected","storage":"connected"}`.
+- Docker Postgres and LocalStack volumes were not reset.
+
+**Profile photos backend: PASS.**

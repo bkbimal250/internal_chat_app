@@ -16,6 +16,7 @@ export async function cleanupAttachments(app) {
     .from(attachments)
     .where(and(eq(attachments.status, 'deleted'), isNull(attachments.messageId)));
   for (const row of [...expired, ...rejected]) {
+    await app.storage.abortMultipart(row.storageKey, row.multipartUploadId);
     await app.storage.remove(row.storageKey).catch(() => {});
     if (row.status !== 'deleted') {
       await app.database.db

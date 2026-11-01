@@ -15,8 +15,13 @@ test('sanitizeFileName strips paths and reserved characters', () => {
 
 test('assertDeclaredType rejects unknown and oversized files', () => {
   assert.equal(assertDeclaredType('image/png', 100).kind, 'image');
+  assert.equal(assertDeclaredType('video/mp4', 2 * 1024 * 1024 * 1024).kind, 'video');
+  assert.equal(assertDeclaredType('application/zip', 1024).kind, 'file');
+  assert.equal(assertDeclaredType('audio/x-m4a', 2048).kind, 'audio');
+  assert.equal(assertDeclaredType('audio/aac', 2048).kind, 'audio');
+  assert.equal(assertDeclaredType('video/3gpp', 2048).kind, 'video');
   assert.throws(() => assertDeclaredType('application/x-msdownload', 10), /not allowed/);
-  assert.throws(() => assertDeclaredType('image/png', 11 * 1024 * 1024), /too large/);
+  assert.throws(() => assertDeclaredType('image/png', 26 * 1024 * 1024), /too large/);
 });
 
 test('inspectContent trusts magic bytes over extensions', async () => {

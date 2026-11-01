@@ -2,6 +2,9 @@ import { authController } from './auth.controller.js';
 import {
   apiSchema,
   LoginBody,
+  OtpRequestBody,
+  OtpRequestResponse,
+  OtpVerifyBody,
   RefreshBody,
   ChangePasswordBody,
   Tokens,
@@ -11,6 +14,35 @@ import {
 export default async function authRoutes(app, config) {
   const controller = authController(app, config);
   const rate = { rateLimit: { max: config.authRateLimit, timeWindow: '1 minute' } };
+  const otpRate = { rateLimit: { max: config.otpRateLimit, timeWindow: '1 minute' } };
+  app.post(
+    '/api/v1/auth/otp/request',
+    {
+      schema: apiSchema(
+        'Auth',
+        'Request an SMS one-time code',
+        OtpRequestResponse,
+        { body: OtpRequestBody },
+        false,
+      ),
+      config: otpRate,
+    },
+    controller.requestOtp,
+  );
+  app.post(
+    '/api/v1/auth/otp/verify',
+    {
+      schema: apiSchema(
+        'Auth',
+        'Verify an SMS one-time code and create a session',
+        Tokens,
+        { body: OtpVerifyBody },
+        false,
+      ),
+      config: otpRate,
+    },
+    controller.verifyOtp,
+  );
   app.post(
     '/api/v1/auth/login',
     {

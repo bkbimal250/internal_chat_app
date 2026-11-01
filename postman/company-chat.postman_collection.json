@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b7e4c2a1-9d50-4f8b-8c31-company-chat-api",
     "name": "Company Chat API",
-    "description": "Native-token and cookie/CSRF flows for the Fastify company-chat API.\n\n**Do not export this collection after a run** if Postman prompts to include current variable values. Passwords, refresh tokens, and CSRF tokens must stay out of git.\n\nNative requests must omit `Origin`. Web requests must send `Origin: {{webOrigin}}` and `X-Requested-With: company-chat`. Fill `adminUsername` / `adminPassword` in the Local environment before Admin Login.",
+    "description": "Native-token and cookie/CSRF flows for the Fastify company-chat API.\n\n**Do not export this collection after a run** if Postman prompts to include current variable values. Passwords, OTP codes, refresh tokens, and CSRF tokens must stay out of git. Leave `otpCode` empty in git and paste a code only in a local run.\n\nNative requests must omit `Origin`. Web requests must send `Origin: {{webOrigin}}` and `X-Requested-With: company-chat`. Fill `adminUsername` / `adminPassword` in the Local environment before Admin Login.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -15,7 +15,8 @@
     { "key": "employeeAccessToken", "value": "" },
     { "key": "employeeRefreshToken", "value": "" },
     { "key": "employeeSessionId", "value": "" },
-    { "key": "employeeTempPassword", "value": "" }
+    { "key": "employeeTempPassword", "value": "" },
+    { "key": "employeePhone", "value": "" }
   ],
   "item": [
     {
@@ -259,7 +260,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"username\": \"{{employeeUsername}}\",\n  \"displayName\": \"{{employeeDisplayName}}\",\n  \"employeeCode\": \"{{employeeCode}}\",\n  \"email\": \"{{employeeEmail}}\",\n  \"role\": \"user\"\n}"
+              "raw": "{\n  \"username\": \"{{employeeUsername}}\",\n  \"displayName\": \"{{employeeDisplayName}}\",\n  \"fullName\": \"{{employeeDisplayName}}\",\n  \"employeeCode\": \"{{employeeCode}}\",\n  \"email\": \"{{employeeEmail}}\",\n  \"role\": \"user\"\n}"
             },
             "url": "{{baseUrl}}/api/v1/admin/users"
           },
@@ -386,6 +387,144 @@
             "method": "DELETE",
             "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
             "url": "{{baseUrl}}/api/v1/admin/users/{{employeeId}}/sessions"
+          }
+        },
+        {
+          "name": "Update employee profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"{{employeeDisplayName}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/users/{{employeeId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('updated', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Filter employees",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+            "url": "{{baseUrl}}/api/v1/admin/users?page=1&limit=20&status=active&role=user&search={{employeeUsername}}"
+          }
+        },
+        {
+          "name": "Delete employee",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }],
+            "url": "{{baseUrl}}/api/v1/admin/users/{{employeeId}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('deleted', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OTP",
+      "item": [
+        {
+          "name": "Request OTP",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{employeePhone}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/otp/request"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('otp request is generic', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.accepted).to.eql(true);",
+                  "  pm.expect(body).to.not.have.property('code');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify OTP (fill code locally, do not save)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{employeePhone}}\",\n  \"code\": \"{{otpCode}}\",\n  \"clientType\": \"native\",\n  \"platform\": \"android\",\n  \"deviceName\": \"Postman OTP\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/otp/verify"
+          }
+        },
+        {
+          "name": "Unauthorized employee create (expect 401)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"public.signup\",\n  \"displayName\": \"Should Fail\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/admin/users"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('rejected', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Employee self-service",
+      "item": [
+        {
+          "name": "Update own profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{employeeAccessToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"{{employeeDisplayName}}\",\n  \"address\": \"{{employeeAddress}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/users/me"
           }
         }
       ]

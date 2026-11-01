@@ -92,3 +92,12 @@
     cursor: pointer;
   }
 }
+
+.chat-wallpaper {
+  background-color: oklch(0.96 0.012 90);
+  background-image:
+    radial-gradient(oklch(0.72 0.11 85 / 0.07) 0.8px, transparent 0.8px),
+    radial-gradient(oklch(0.3 0.02 250 / 0.04) 0.8px, transparent 0.8px);
+  background-position: 0 0, 7px 7px;
+  background-size: 14px 14px;
+}

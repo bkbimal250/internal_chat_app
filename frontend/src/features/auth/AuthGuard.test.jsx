@@ -44,6 +44,14 @@ function renderAt(path) {
 }
 
 describe('route guards', () => {
+  it('shows a restoring screen until session restoration finishes', () => {
+    useAuth.mockReturnValue({ isAuthenticated: false, isLoading: true, mustChangePassword: false })
+    renderAt('/')
+    expect(screen.getByTestId('session-restoring')).toBeInTheDocument()
+    expect(screen.queryByText('login page')).not.toBeInTheDocument()
+    expect(screen.queryByText('chat page')).not.toBeInTheDocument()
+  })
+
   it('sends anonymous users to login', () => {
     useAuth.mockReturnValue({ isAuthenticated: false, isLoading: false, mustChangePassword: false })
     renderAt('/')

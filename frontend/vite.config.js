@@ -6,8 +6,31 @@ import tailwindcss from '@tailwindcss/vite'
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
 
+function redirectLocalhost() {
+  function redirect(req, res, next, fallbackPort) {
+    const host = String(req.headers.host || '')
+    if (host === 'localhost' || host.startsWith('localhost:')) {
+      const port = host.includes(':') ? host.split(':')[1] : fallbackPort
+      res.statusCode = 307
+      res.setHeader('Location', `http://127.0.0.1:${port}${req.url}`)
+      res.end()
+      return
+    }
+    next()
+  }
+  return {
+    name: 'redirect-localhost-to-127-0-0-1',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => redirect(req, res, next, '5173'))
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => redirect(req, res, next, '4173'))
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), redirectLocalhost()],
   resolve: {
     alias: {
       '@': path.resolve(rootDir, './src'),

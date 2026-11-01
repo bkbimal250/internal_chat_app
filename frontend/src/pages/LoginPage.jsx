@@ -6,7 +6,9 @@ export function LoginPage() {
     <Card>
       <CardHeader>
         <CardTitle className="font-display text-2xl">Sign in</CardTitle>
-        <CardDescription>Use your employee username. This form talks to the live API, not a mock session.</CardDescription>
+        <CardDescription>
+          Sign in with a verified work phone or your username and password. This form talks to the live API.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <LoginForm />

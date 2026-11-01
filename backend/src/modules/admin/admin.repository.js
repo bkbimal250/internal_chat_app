@@ -7,11 +7,19 @@ export const searchUsers = (term) =>
     ? or(
         ilike(users.username, `%${term}%`),
         ilike(users.displayName, `%${term}%`),
+        ilike(users.fullName, `%${term}%`),
         ilike(users.employeeCode, `%${term}%`),
+        ilike(users.email, `%${term}%`),
+        ilike(users.phoneE164, `%${term}%`),
       )
     : undefined;
-export async function employeePage(db, { page, limit, search }) {
-  const where = and(nonDeleted, searchUsers(search));
+export async function employeePage(db, { page, limit, search, status, role }) {
+  const where = and(
+    nonDeleted,
+    searchUsers(search),
+    status ? eq(users.status, status) : undefined,
+    role ? eq(users.role, role) : undefined,
+  );
   const [total] = await db.select({ total: count() }).from(users).where(where);
   const data = await db
     .select()

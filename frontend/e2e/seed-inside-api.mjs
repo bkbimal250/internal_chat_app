@@ -20,6 +20,7 @@ async function upsert(account) {
       `update users
        set password_hash = $1,
            display_name = $2,
+           full_name = $2,
            role = $3::user_role,
            status = 'active'::user_status,
            must_change_password = $4,
@@ -37,8 +38,8 @@ async function upsert(account) {
     return existing.rows[0].id
   }
   const inserted = await pool.query(
-    `insert into users (username, display_name, password_hash, role, status, must_change_password)
-     values ($1, $2, $3, $4::user_role, 'active'::user_status, $5)
+    `insert into users (username, display_name, full_name, password_hash, role, status, must_change_password)
+     values ($1, $2, $2, $3, $4::user_role, 'active'::user_status, $5)
      returning id`,
     [account.username, account.displayName, passwordHash, account.role, account.mustChangePassword],
   )

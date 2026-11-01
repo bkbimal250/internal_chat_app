@@ -113,8 +113,15 @@ The suite covers employee login, logout, session restore, first-login password
 change, realtime DM exchange, delivery/read ticks, typing and online status,
 reply/edit/delete/forward, group create/membership, owner promote/transfer/leave,
 multi-device sync, disconnect recovery, admin create/suspend/reactivate/reset/
-revoke/audit, unauthorized admin access, desktop/tablet/mobile layout, and
-authorized image attachment upload with realtime delivery and lightbox.
+revoke/audit, unauthorized admin access, desktop/tablet/mobile layout,
+authorized image attachment upload with realtime delivery and lightbox, and
+profile photo upload, display, peer sync, initials fallback, and unauthorized
+admin photo rejection.
+
+Circular `UserAvatar` photos use the shadcn Avatar primitive. Employees upload
+or remove photos in Settings → Your info. Directory, conversation lists, chat
+headers, group members, message senders, the account rail, and the admin table
+load signed photo URLs lazily and fall back to initials or a group icon.
 
 The API CORS policy must allow `GET, HEAD, POST, PUT, PATCH, DELETE` from
 `http://127.0.0.1:5173`. `@fastify/cors` defaults to GET/HEAD/POST only, which
@@ -126,9 +133,10 @@ Calling and Flutter remain out of scope.
 
 ## Attachments
 
-The composer paperclip and drag-and-drop on the message pane upload through
-presigned S3 URLs. Progress, cancel, and retry use XHR. After finalize, messages
-include public attachment metadata (never storage keys). Images open in a
-lightbox; video and audio use native controls; PDFs and Office files render as
-download cards. Signed GET URLs are fetched per attachment and expire quickly.
-Delete is available for the sender within the existing 15-minute window.
+The composer paperclip and drag-and-drop upload through presigned S3 URLs.
+Images are canvas-compressed; browser video under 80 MB can be re-encoded when
+that shrinks the file; PDFs, ZIPs, and Office documents are never recompressed.
+Files over 8 MB use resumable 8 MB multipart parts with retry. The progress card
+shows percent, transferred bytes, and an ETA. After finalize, messages include
+public attachment metadata (never storage keys). Images open in a lightbox;
+video and audio use native controls; documents render as download cards.

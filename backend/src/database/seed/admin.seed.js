@@ -17,6 +17,7 @@ export async function bootstrapAdmin(db, values) {
       .values({
         username: values.username,
         displayName: values.displayName,
+        fullName: values.displayName,
         passwordHash,
         role: 'admin',
         mustChangePassword: true,

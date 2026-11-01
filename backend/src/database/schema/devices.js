@@ -12,6 +12,8 @@ export const devices = pgTable(
     deviceName: varchar('device_name', { length: 120 }).notNull(),
     platform: devicePlatform('platform').notNull(),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+    pushToken: varchar('push_token', { length: 4096 }),
+    pushTokenUpdatedAt: timestamp('push_token_updated_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

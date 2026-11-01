@@ -2,8 +2,18 @@ import { test, expect } from '@playwright/test'
 import { loadAccounts, login } from './helpers.js'
 
 test.describe('Authentication', () => {
+  test('defaults to phone OTP and still exposes username login', async ({ page }) => {
+    await page.goto('/login')
+    await expect(page.getByTestId('login-phone')).toBeVisible()
+    await expect(page.getByTestId('login-username')).toBeHidden()
+    await page.getByTestId('login-tab-password').click()
+    await expect(page.getByTestId('login-username')).toBeVisible()
+    await expect(page.getByTestId('login-password-toggle')).toBeVisible()
+  })
+
   test('rejects invalid credentials against the live API', async ({ page }) => {
     await page.goto('/login')
+    await page.getByTestId('login-tab-password').click()
     await page.getByTestId('login-username').fill('e2e.unknown.user')
     await page.getByTestId('login-password').fill('definitely-wrong-password')
     await page.getByTestId('login-submit').click()
@@ -19,7 +29,7 @@ test.describe('Authentication', () => {
     await expect(page.getByTestId('chats-heading')).toBeVisible()
     await expect(page).not.toHaveURL(/\/login/)
     await page.getByTestId('sign-out').click()
-    await expect(page.getByTestId('login-submit')).toBeVisible()
+    await expect(page.getByTestId('login-tab-password')).toBeVisible()
     await expect(page).toHaveURL(/\/login/)
   })
 
@@ -39,8 +49,9 @@ test.describe('Authentication', () => {
     const accounts = loadAccounts()
     await login(page, accounts.alpha)
     await page.goto('/admin')
+    await expect(page).toHaveURL('http://127.0.0.1:5173/')
     await expect(page.getByRole('heading', { name: 'Admin dashboard' })).toHaveCount(0)
     await expect(page.getByTestId('chats-heading')).toBeVisible()
-    await expect(page.getByRole('link', { name: 'Admin' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Admin', exact: true })).toHaveCount(0)
   })
 })

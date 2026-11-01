@@ -53,9 +53,9 @@ manager when deploying beyond the local foundation.
 | S3_FORCE_PATH_STYLE | Path-style addressing; default `true` |
 | S3_UPLOAD_TTL_SECONDS | Presigned PUT lifetime; default `300` |
 | S3_DOWNLOAD_TTL_SECONDS | Presigned GET lifetime; default `60` |
-| ATTACHMENT_PENDING_TTL_MS | Abandoned-upload expiry; default `900000` |
-| ATTACHMENT_DAILY_QUOTA_BYTES | Per-uploader 24-hour quota; default 200 MiB |
-| ATTACHMENT_RATE_LIMIT | Attachment routes per IP per minute; default `20` |
+| ATTACHMENT_PENDING_TTL_MS | Abandoned-upload expiry; default `7200000` (2 hours) |
+| ATTACHMENT_DAILY_QUOTA_BYTES | Per-uploader 24-hour quota; default 8 GiB |
+| ATTACHMENT_RATE_LIMIT | Attachment routes per IP per minute; default `60` |
 
 For production set `NODE_ENV=production`. If overriding `DATABASE_URL`, URL-encode
 credentials. Compose credentials are encoded automatically. No secrets are baked
@@ -321,8 +321,18 @@ to the internal session-revocation event; Phase 2 does not add sockets.
 Administrators can use `/admin/users` to create, search, update, suspend,
 reactivate, reset passwords and revoke sessions, and `/admin/audit-logs` for
 limited audit history. Employee endpoints are `/users`, `/users/me`, `/devices`,
-and `/sessions`. User profile edits only permit `displayName`; role, status,
-username, employee code, and password hashes cannot be changed by that endpoint.
+and `/sessions`. User profile edits only permit display and contact fields; role,
+status, username, employee code, and password hashes cannot be changed by that
+endpoint.
+
+Profile photos are JPEG, PNG, or WebP up to 5 MB. Employees start an upload with
+`POST /users/me/photo`, PUT the object to the returned private URL, then
+`POST /users/me/photo/complete`. `DELETE /users/me/photo` removes the current
+photo. Administrators use `/admin/users/:id/photo` (init, complete, and DELETE).
+The API inspects magic bytes, writes a 256×256 WebP thumbnail with `sharp`, and
+stores only the object key in PostgreSQL. `GET /users/:id/photo-url` returns a
+short-lived authenticated download URL. Completing or removing a photo broadcasts
+`user.updated` to the employee’s other devices and conversation peers.
 The temporary password returned from account creation or reset is a one-time
 delivery value: present it through an approved private channel, never logs.
 
@@ -340,6 +350,12 @@ Phase 2 environment settings:
 | JWT_ISSUER / JWT_AUDIENCE | Expected issuer/audience values for access token verification. |
 | REFRESH_TOKEN_DAYS | Refresh-token absolute lifetime; 1–90 days. |
 | AUTH_RATE_LIMIT | Per-IP login and refresh attempts per minute. |
+| OTP_RATE_LIMIT | Per-IP OTP request/verify attempts per minute. |
+| OTP_TTL_SECONDS | SMS one-time code lifetime (30–900 seconds). |
+| OTP_RESEND_SECONDS | Minimum delay before another code can be sent to the same number. |
+| OTP_MAX_ATTEMPTS | Failed verification attempts allowed per challenge. |
+| OTP_MAX_PER_HOUR | Maximum OTP challenges stored per phone number per hour. |
+| TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER | Twilio SMS credentials. Required in production. Local development skips sending when empty. |
 | SESSION_CLEANUP_INTERVAL_MS | Expired-session/consumed-token cleanup interval. |
 | BOOTSTRAP_ADMIN_* | One-time bootstrap command input only; do not set for normal API runtime. |
 
@@ -500,24 +516,29 @@ Direct chats: `POST /api/v1/conversations/direct`. History:
 
 ### Attachment APIs
 
-Uploads use a presigned PUT, then a server-side finalize that downloads the
-object, inspects magic bytes, rejects executables, SHA-256s the body, and only
-then creates a sequenced message. Unverified objects are never downloadable.
+Small files still use a single presigned PUT. Files over 8 MiB, or any upload
+with `strategy: "multipart"`, use resumable S3 multipart. Finalize never loads
+the object into memory: it streams a prefix/tail for magic-byte inspection,
+rejects executables, SHA-256s the object as a stream, then creates a sequenced
+message. Unverified objects are never downloadable.
 
-- `POST /api/v1/conversations/:id/attachments` `{fileName,mimeType,sizeBytes}` →
-  `{id,uploadUrl,headers,expiresAt,maxBytes}` (conversation members only)
-- Browser `PUT` to `uploadUrl` with the returned `Content-Type`
-- `POST /api/v1/attachments/:id/finalize` `{clientMessageId,caption?,replyToMessageId?}`
+- `POST /api/v1/conversations/:id/attachments`
+  `{fileName,mimeType,sizeBytes,strategy?}` → `{id,mode,uploadUrl?,partSize,partCount,headers,expiresAt,maxBytes}`
+- `POST /api/v1/attachments/:id/parts` `{partNumbers}` → short-lived part PUT URLs
+- `GET /api/v1/attachments/:id/parts` → already-uploaded parts for resume
+- Browser `PUT` to `uploadUrl` or each part URL (do not buffer the whole file)
+- `POST /api/v1/attachments/:id/finalize` `{clientMessageId,caption?,replyToMessageId?,parts?}`
   → message with `messageType` `image`/`video`/`audio`/`file` and public
   attachment metadata (no `storageKey`)
 - `GET /api/v1/attachments/:id/url` → short-lived signed GET (members only;
   `available` attachments whose parent message is not deleted)
-- `DELETE /api/v1/attachments/:id` cancels a pending upload or deletes an
-  available file and its message
+- `DELETE /api/v1/attachments/:id` cancels a pending upload (and aborts multipart)
+  or deletes an available file and its message
 
-Allowed types: JPEG/PNG/WebP/GIF (10 MiB), MP4/WebM video (50 MiB), MPEG/MP4/OGG/WAV/WebM
-audio (20 MiB), PDF/DOCX/XLSX (25 MiB), text/plain (2 MiB). Images, video, and
-audio are served with `Content-Disposition: inline`; documents use `attachment`.
+Allowed types: JPEG/PNG/WebP/GIF (25 MiB), MP4/WebM/QuickTime video (2 GiB),
+MPEG/MP4/OGG/WAV/WebM audio (100 MiB), PDF/ZIP/DOCX/XLSX/PPTX (2 GiB),
+text/plain (8 MiB). Images, video, and audio are served with
+`Content-Disposition: inline`; documents use `attachment`.
 Daily quota and unfinished-upload limits apply. Abandoned pending/quarantined
 rows are deleted by the cleanup job after `ATTACHMENT_PENDING_TTL_MS`.
 

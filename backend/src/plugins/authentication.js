@@ -11,6 +11,22 @@ export const cookieOptions = (config) => ({
   secure: config.nodeEnv === 'production',
   sameSite: 'strict',
 });
+
+function cookieExpiry(config, expiresAt) {
+  const parsed = expiresAt instanceof Date ? expiresAt : new Date(expiresAt);
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+  return new Date(Date.now() + config.refreshTokenDays * 86400000);
+}
+
+export function persistentCookieOptions(config, expiresAt) {
+  const expires = cookieExpiry(config, expiresAt);
+  const maxAge = Math.max(1, Math.floor((expires.getTime() - Date.now()) / 1000));
+  return {
+    ...cookieOptions(config),
+    expires,
+    maxAge,
+  };
+}
 export function checkOrigin(request, config) {
   if (!request.headers.origin || !config.corsOrigins.includes(request.headers.origin)) {
     throw new AppError('Origin not allowed', 403, 'ORIGIN_FORBIDDEN');
@@ -62,8 +78,12 @@ export default async function registerAuthentication(app, config) {
     reply.header('cache-control', 'no-store');
     if (['POST', 'PATCH', 'DELETE', 'PUT'].includes(request.method)) {
       if (request.headers.origin) checkOrigin(request, config);
-      if (request.cookies[REFRESH_COOKIE] && !request.url.split('?')[0].endsWith('/auth/login'))
-        checkCsrf(request, config);
+      const path = request.url.split('?')[0];
+      const publicAuth =
+        path.endsWith('/auth/login') ||
+        path.endsWith('/auth/otp/request') ||
+        path.endsWith('/auth/otp/verify');
+      if (request.cookies[REFRESH_COOKIE] && !publicAuth) checkCsrf(request, config);
     }
   });
 }

@@ -14,6 +14,57 @@ import {
   usableUser,
 } from './auth.repository.js';
 
+async function openSession(tx, config, user, input, context, method) {
+  const [{ count }] = await tx
+    .select({ count: sql`count(*)::int` })
+    .from(sessions)
+    .where(activeSessions(user.id));
+  if (count >= 50) throw new AppError('Maximum active sessions reached', 409, 'SESSION_LIMIT');
+  let device;
+  if (input.deviceId) {
+    [device] = await tx
+      .select()
+      .from(devices)
+      .where(and(eq(devices.id, input.deviceId), eq(devices.userId, user.id)));
+    if (!device || device.platform !== input.platform)
+      throw new AppError('Invalid device', 400, 'INVALID_DEVICE');
+    [device] = await tx
+      .update(devices)
+      .set({ deviceName: input.deviceName, lastSeenAt: new Date() })
+      .where(eq(devices.id, device.id))
+      .returning();
+  } else {
+    [device] = await tx
+      .insert(devices)
+      .values({
+        userId: user.id,
+        deviceName: input.deviceName,
+        platform: input.platform,
+      })
+      .returning();
+  }
+  const token = newRefreshToken();
+  const [session] = await tx
+    .insert(sessions)
+    .values({
+      userId: user.id,
+      deviceId: device.id,
+      refreshTokenHash: hashToken(token),
+      transport: input.clientType,
+      expiresAt: new Date(Date.now() + config.refreshTokenDays * 86400000),
+    })
+    .returning();
+  await audit(
+    tx,
+    { ...context, userId: user.id, sessionId: session.id },
+    'auth.login',
+    'session',
+    session.id,
+    { platform: device.platform, method },
+  );
+  return { user, session, token };
+}
+
 export function authService(app, config) {
   const db = app.database.db;
   return {
@@ -27,59 +78,18 @@ export function authService(app, config) {
         await audit(db, { ip: context.ip }, 'auth.login_failed', 'user');
         throw invalidCredentials();
       }
-      const token = newRefreshToken();
       return db.transaction(async (tx) => {
         const user = await lockUser(tx, candidate.id);
         if (!usableUser(user) || user.passwordHash !== candidate.passwordHash)
           throw invalidCredentials();
-        const [{ count }] = await tx
-          .select({ count: sql`count(*)::int` })
-          .from(sessions)
-          .where(activeSessions(user.id));
-        if (count >= 50)
-          throw new AppError('Maximum active sessions reached', 409, 'SESSION_LIMIT');
-        let device;
-        if (input.deviceId) {
-          [device] = await tx
-            .select()
-            .from(devices)
-            .where(and(eq(devices.id, input.deviceId), eq(devices.userId, user.id)));
-          if (!device || device.platform !== input.platform)
-            throw new AppError('Invalid device', 400, 'INVALID_DEVICE');
-          [device] = await tx
-            .update(devices)
-            .set({ deviceName: input.deviceName, lastSeenAt: new Date() })
-            .where(eq(devices.id, device.id))
-            .returning();
-        } else {
-          [device] = await tx
-            .insert(devices)
-            .values({
-              userId: user.id,
-              deviceName: input.deviceName,
-              platform: input.platform,
-            })
-            .returning();
-        }
-        const [session] = await tx
-          .insert(sessions)
-          .values({
-            userId: user.id,
-            deviceId: device.id,
-            refreshTokenHash: hashToken(token),
-            transport: input.clientType,
-            expiresAt: new Date(Date.now() + config.refreshTokenDays * 86400000),
-          })
-          .returning();
-        await audit(
-          tx,
-          { ...context, userId: user.id, sessionId: session.id },
-          'auth.login',
-          'session',
-          session.id,
-          { platform: device.platform },
-        );
-        return { user, session, token };
+        return openSession(tx, config, user, input, context, 'password');
+      });
+    },
+    async loginWithOtp(user, input, context) {
+      return db.transaction(async (tx) => {
+        const locked = await lockUser(tx, user.id);
+        if (!usableUser(locked)) throw invalidCredentials();
+        return openSession(tx, config, locked, input, context, 'otp');
       });
     },
     async refresh(token, transport, context) {

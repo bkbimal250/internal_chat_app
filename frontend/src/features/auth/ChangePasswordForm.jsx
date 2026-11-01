@@ -7,6 +7,7 @@ import { useAuth } from '@/hooks/use-auth'
 import { getErrorMessage } from '@/services/api-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
 import {
   Form,
   FormControl,
@@ -16,7 +17,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 
-export function ChangePasswordForm({ onSuccess }) {
+export function ChangePasswordForm({ onSuccess, submitClassName }) {
   const { changePassword } = useAuth()
   const navigate = useNavigate()
   const form = useForm({
@@ -97,7 +98,7 @@ export function ChangePasswordForm({ onSuccess }) {
         />
         <Button
           type="submit"
-          className="w-full"
+          className={cn('w-full', submitClassName)}
           disabled={form.formState.isSubmitting}
           data-testid="update-password"
         >

@@ -2,8 +2,12 @@ import { and, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import { attachments, conversations, conversationMembers, messages } from '../../database/schema/index.js';
 import { AppError } from '../../utils/app-error.js';
 import { conversationService } from '../conversations/conversations.service.js';
-import { assertDeclaredType, inspectContent, sanitizeFileName } from '../../services/file-kind.js';
+import { assertReplyTo } from '../messages/message-references.js';
+import { assertDeclaredType, inspectUploadedObject, sanitizeFileName } from '../../services/file-kind.js';
 import { createStorageKey } from '../../services/object-storage.service.js';
+import { assertPartNumbers, normalizeParts, planUpload } from '../../services/upload-plan.js';
+import { expiresAtForInsert } from '../retention/expires-at.js';
+import { assertGroupSend } from '../groups/group-permissions.js';
 
 const INLINE_KINDS = new Set(['image', 'video', 'audio']);
 
@@ -67,19 +71,7 @@ export function attachmentsService(app, config) {
         .where(and(eq(messages.conversationId, conversationId), eq(messages.clientMessageId, clientMessageId)));
       if (duplicate) return { message: duplicate, duplicate: true };
     }
-    if (replyToMessageId) {
-      const [reply] = await tx
-        .select()
-        .from(messages)
-        .where(
-          and(
-            eq(messages.id, replyToMessageId),
-            eq(messages.conversationId, conversationId),
-            isNull(messages.deletedAt),
-          ),
-        );
-      if (!reply) throw new AppError('Referenced message unavailable', 400, 'INVALID_REFERENCE');
-    }
+    await assertReplyTo(tx, { conversation, userId, replyToMessageId });
     const [c] = await tx
       .update(conversations)
       .set({
@@ -89,6 +81,7 @@ export function attachmentsService(app, config) {
       })
       .where(eq(conversations.id, conversationId))
       .returning();
+    const expiresAt = await expiresAtForInsert(tx);
     const [message] = await tx
       .insert(messages)
       .values({
@@ -100,6 +93,7 @@ export function attachmentsService(app, config) {
         messageType: kind,
         content: content ?? '',
         replyToMessageId,
+        expiresAt,
       })
       .returning();
     return { message, duplicate: false };
@@ -126,7 +120,8 @@ export function attachmentsService(app, config) {
       return rows.map((row) => ({ ...row, attachment: publicAttachment(byMessage.get(row.id)) }));
     },
     async init(conversationId, userId, input) {
-      await conversationsService.assertMember(conversationId, userId);
+      const { conversation, member } = await conversationsService.assertMember(conversationId, userId);
+      assertGroupSend(conversation, member.role);
       const spec = assertDeclaredType(input.mimeType, input.sizeBytes);
       const used = await dailyUsage(userId);
       if (used + input.sizeBytes > config.attachmentDailyQuotaBytes) {
@@ -140,6 +135,9 @@ export function attachmentsService(app, config) {
       if (!storage.enabled) throw new AppError('File storage is unavailable', 503, 'STORAGE_UNAVAILABLE');
       const storageKey = createStorageKey();
       const uploadExpiresAt = new Date(Date.now() + config.attachmentPendingTtlMs);
+      const plan = planUpload(input.sizeBytes, input.strategy);
+      const multipartUploadId =
+        plan.mode === 'multipart' ? await storage.createMultipartUpload(storageKey, input.mimeType) : null;
       const [row] = await db
         .insert(attachments)
         .values({
@@ -151,16 +149,75 @@ export function attachmentsService(app, config) {
           sizeBytes: input.sizeBytes,
           kind: spec.kind,
           status: 'pending',
+          multipartUploadId,
           uploadExpiresAt,
         })
         .returning();
-      const uploadUrl = await storage.presignUpload(storageKey, input.mimeType, config.s3UploadTtlSeconds);
-      return {
+      const headers = { 'Content-Type': input.mimeType };
+      const shared = {
         id: row.id,
-        uploadUrl,
-        headers: { 'Content-Type': input.mimeType },
+        mode: plan.mode,
+        headers,
         expiresAt: uploadExpiresAt.toISOString(),
         maxBytes: spec.maxBytes,
+        partSize: plan.partSize,
+        partCount: plan.partCount,
+      };
+      if (plan.mode === 'single') {
+        return {
+          ...shared,
+          uploadUrl: await storage.presignUpload(storageKey, input.mimeType, config.s3UploadTtlSeconds),
+        };
+      }
+      return shared;
+    },
+    async requirePendingUploader(id, userId) {
+      const [existing] = await db.select().from(attachments).where(eq(attachments.id, id));
+      if (!existing || existing.uploaderId !== userId) throw new AppError('Attachment not found', 404, 'NOT_FOUND');
+      await conversationsService.assertMember(existing.conversationId, userId);
+      if (existing.status !== 'pending') throw new AppError('Upload is not pending', 409, 'CONFLICT');
+      if (existing.uploadExpiresAt && existing.uploadExpiresAt.getTime() < Date.now()) {
+        throw new AppError('Upload expired', 410, 'UPLOAD_EXPIRED');
+      }
+      return existing;
+    },
+    async signParts(id, userId, input) {
+      const existing = await this.requirePendingUploader(id, userId);
+      if (!existing.multipartUploadId) throw new AppError('Upload is not multipart', 409, 'CONFLICT');
+      const plan = planUpload(existing.sizeBytes, 'multipart');
+      const partNumbers = assertPartNumbers(input.partNumbers, plan.partCount);
+      if (!partNumbers) throw new AppError('Part numbers are invalid', 400, 'VALIDATION_ERROR');
+      const expiresAt = new Date(Date.now() + config.s3UploadTtlSeconds * 1000).toISOString();
+      const parts = [];
+      for (const partNumber of partNumbers) {
+        parts.push({
+          partNumber,
+          uploadUrl: await storage.presignUploadPart(
+            existing.storageKey,
+            existing.multipartUploadId,
+            partNumber,
+            config.s3UploadTtlSeconds,
+          ),
+          headers: {},
+          expiresAt,
+        });
+      }
+      return { id: existing.id, partSize: plan.partSize, partCount: plan.partCount, parts };
+    },
+    async listUploadedParts(id, userId) {
+      const existing = await this.requirePendingUploader(id, userId);
+      if (!existing.multipartUploadId) {
+        return { id: existing.id, mode: 'single', parts: [], partSize: existing.sizeBytes, partCount: 1 };
+      }
+      const plan = planUpload(existing.sizeBytes, 'multipart');
+      const parts = await storage.listParts(existing.storageKey, existing.multipartUploadId);
+      return {
+        id: existing.id,
+        mode: 'multipart',
+        partSize: plan.partSize,
+        partCount: plan.partCount,
+        sizeBytes: existing.sizeBytes,
+        parts,
       };
     },
     async finalize(id, userId, input) {
@@ -175,15 +232,34 @@ export function attachmentsService(app, config) {
       if (existing.uploadExpiresAt && existing.uploadExpiresAt.getTime() < Date.now()) {
         throw new AppError('Upload expired', 410, 'UPLOAD_EXPIRED');
       }
+      if (existing.multipartUploadId) {
+        const head = await storage.head(existing.storageKey);
+        if (!head) {
+          const plan = planUpload(existing.sizeBytes, 'multipart');
+          const clientParts = normalizeParts(input.parts, plan.partCount);
+          const listed = clientParts ?? (await storage.listParts(existing.storageKey, existing.multipartUploadId));
+          const uploadedBytes = listed.reduce((sum, part) => sum + Number(part.sizeBytes ?? 0), 0);
+          if (!listed.length || listed.length !== plan.partCount) {
+            throw new AppError('Uploaded object was not found', 409, 'UPLOAD_INCOMPLETE');
+          }
+          if (!clientParts && uploadedBytes !== existing.sizeBytes) {
+            throw new AppError('Uploaded size does not match', 400, 'INVALID_UPLOAD');
+          }
+          await storage.completeMultipart(existing.storageKey, existing.multipartUploadId, listed);
+        }
+      }
       const head = await storage.head(existing.storageKey);
       if (!head) throw new AppError('Uploaded object was not found', 409, 'UPLOAD_INCOMPLETE');
       const size = Number(head.ContentLength ?? 0);
       if (size !== existing.sizeBytes) throw new AppError('Uploaded size does not match', 400, 'INVALID_UPLOAD');
-      await db.update(attachments).set({ status: 'quarantined' }).where(eq(attachments.id, id));
-      let buffer;
+      await db
+        .update(attachments)
+        .set({ status: 'quarantined', multipartUploadId: null })
+        .where(eq(attachments.id, id));
+      let checksum;
       try {
-        buffer = await storage.getObjectBuffer(existing.storageKey, existing.sizeBytes);
-        await inspectContent(buffer, existing.mimeType);
+        await inspectUploadedObject(storage, existing.storageKey, existing.mimeType, existing.sizeBytes);
+        checksum = await storage.hashObject(existing.storageKey);
       } catch (error) {
         await db
           .update(attachments)
@@ -196,7 +272,6 @@ export function attachmentsService(app, config) {
         await storage.remove(existing.storageKey).catch(() => {});
         throw error instanceof AppError ? error : new AppError('File failed security checks', 415, 'UNSUPPORTED_MEDIA_TYPE');
       }
-      const checksum = storage.sha256(buffer);
       return db.transaction(async (tx) => {
         const created = await insertMessage(tx, {
           conversationId: existing.conversationId,
@@ -240,7 +315,7 @@ export function attachmentsService(app, config) {
         return { ...created.message, attachment: publicAttachment(updated), duplicate: false };
       });
     },
-    async downloadUrl(id, userId) {
+    async downloadUrl(id, userId, { download = false } = {}) {
       const [row] = await db.select().from(attachments).where(eq(attachments.id, id));
       if (!row || row.status !== 'available' || row.deletedAt) {
         throw new AppError('Attachment not found', 404, 'NOT_FOUND');
@@ -251,10 +326,11 @@ export function attachmentsService(app, config) {
       }
       await conversationsService.assertMember(row.conversationId, userId);
       const expiresIn = config.s3DownloadTtlSeconds;
+      const inline = INLINE_KINDS.has(row.kind) && !download;
       const url = await storage.presignDownload(row.storageKey, {
         mimeType: row.mimeType,
         fileName: row.originalName,
-        inline: INLINE_KINDS.has(row.kind),
+        inline,
         expiresIn,
       });
       return {
@@ -262,7 +338,7 @@ export function attachmentsService(app, config) {
         expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
         mimeType: row.mimeType,
         fileName: row.originalName,
-        inline: INLINE_KINDS.has(row.kind),
+        inline,
       };
     },
     async destroy(id, userId) {
@@ -278,8 +354,9 @@ export function attachmentsService(app, config) {
       if (row.status === 'available') throw new AppError('Available files cannot be cancelled', 409, 'CONFLICT');
       await db
         .update(attachments)
-        .set({ status: 'deleted', deletedAt: new Date() })
+        .set({ status: 'deleted', deletedAt: new Date(), multipartUploadId: null })
         .where(eq(attachments.id, id));
+      await storage.abortMultipart(row.storageKey, row.multipartUploadId);
       await storage.remove(row.storageKey).catch(() => {});
       return { success: true };
     },
@@ -316,7 +393,8 @@ export function attachmentsService(app, config) {
       const [source] = await db.select().from(messages).where(eq(messages.id, sourceMessageId));
       if (!source || source.deletedAt) throw new AppError('Message not found', 404, 'NOT_FOUND');
       await conversationsService.assertMember(source.conversationId, userId);
-      await conversationsService.assertMember(input.conversationId, userId);
+      const dest = await conversationsService.assertMember(input.conversationId, userId);
+      assertGroupSend(dest.conversation, dest.member.role);
       const [file] = await db
         .select()
         .from(attachments)

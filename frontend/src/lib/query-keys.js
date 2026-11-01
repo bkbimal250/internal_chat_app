@@ -9,7 +9,13 @@ export const queryKeys = {
   sessions: ['sessions'],
   devices: ['devices'],
   me: ['me'],
+  photoUrl: (id, version) => ['photo-url', id, version ?? ''],
+  groupPhotoUrl: (id, version) => ['group-photo-url', id, version ?? ''],
   adminUsers: (params) => ['admin-users', params],
   adminUser: (id) => ['admin-user', id],
   adminAudit: (params) => ['admin-audit', params],
+  retentionPolicy: ['retention-policy'],
+  conversationRetention: (id) => ['conversation-retention', id],
+  notifications: ['notifications'],
+  adminRetention: ['admin-retention'],
 }

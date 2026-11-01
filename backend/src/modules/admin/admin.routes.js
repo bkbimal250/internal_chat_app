@@ -2,18 +2,21 @@ import { Type as T } from '@sinclair/typebox';
 import { adminController } from './admin.controller.js';
 import {
   apiSchema,
+  AdminUserQuery,
   CreatedUser,
   CreateUserBody,
   IdParams,
-  PageQuery,
+  PhotoCompleteBody,
+  PhotoInitBody,
+  PhotoInitResponse,
   UpdateUserBody,
   User,
   Audit,
   pageOf,
 } from './admin.schema.js';
-import { object } from '../auth/auth.schema.js';
-export default async function adminRoutes(app) {
-  const c = adminController(app);
+import { object, Ok } from '../auth/auth.schema.js';
+export default async function adminRoutes(app, config) {
+  const c = adminController(app, config);
   const guard = [app.authenticate, app.adminOnly];
   app.post(
     '/api/v1/admin/users',
@@ -33,7 +36,7 @@ export default async function adminRoutes(app) {
   app.get(
     '/api/v1/admin/users',
     {
-      schema: apiSchema('Admin', 'List employees', pageOf(User), { querystring: PageQuery }),
+      schema: apiSchema('Admin', 'List employees', pageOf(User), { querystring: AdminUserQuery }),
       preHandler: guard,
     },
     c.list,
@@ -76,7 +79,9 @@ export default async function adminRoutes(app) {
   app.post(
     '/api/v1/admin/users/:id/reset-password',
     {
-      schema: apiSchema('Admin', 'Reset employee password', CreatedUser, { params: IdParams }),
+      schema: apiSchema('Admin', 'Reset employee password', CreatedUser, {
+        params: IdParams,
+      }),
       preHandler: guard,
     },
     c.reset,
@@ -91,11 +96,49 @@ export default async function adminRoutes(app) {
     },
     c.revoke,
   );
+  app.delete(
+    '/api/v1/admin/users/:id',
+    {
+      schema: apiSchema('Admin', 'Soft-delete employee', Ok, { params: IdParams }),
+      preHandler: guard,
+    },
+    c.remove,
+  );
+  app.post(
+    '/api/v1/admin/users/:id/photo',
+    {
+      schema: apiSchema('Admin', 'Start employee photo upload', PhotoInitResponse, {
+        params: IdParams,
+        body: PhotoInitBody,
+      }),
+      preHandler: guard,
+    },
+    c.initPhoto,
+  );
+  app.post(
+    '/api/v1/admin/users/:id/photo/complete',
+    {
+      schema: apiSchema('Admin', 'Finalize employee photo upload', User, {
+        params: IdParams,
+        body: PhotoCompleteBody,
+      }),
+      preHandler: guard,
+    },
+    c.completePhoto,
+  );
+  app.delete(
+    '/api/v1/admin/users/:id/photo',
+    {
+      schema: apiSchema('Admin', 'Remove employee profile photo', User, { params: IdParams }),
+      preHandler: guard,
+    },
+    c.removePhoto,
+  );
   app.get(
     '/api/v1/admin/audit-logs',
     {
       schema: apiSchema('Admin', 'Administrative audit history', pageOf(Audit), {
-        querystring: PageQuery,
+        querystring: AdminUserQuery,
       }),
       preHandler: guard,
     },

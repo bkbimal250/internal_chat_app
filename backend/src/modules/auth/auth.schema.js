@@ -10,13 +10,21 @@ export const Username = T.String({
   pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$',
 });
 export const DisplayName = T.String({ minLength: 1, maxLength: 120, pattern: '\\S' });
+export const Phone = T.String({ minLength: 8, maxLength: 20 });
+export const Address = T.String({ minLength: 1, maxLength: 500, pattern: '\\S' });
 export const NullableText = T.Union([T.String(), T.Null()]);
 export const User = object({
   id: Id,
   employeeCode: NullableText,
   username: T.String(),
   displayName: T.String(),
+  fullName: T.String(),
   email: NullableText,
+  phoneE164: NullableText,
+  phoneVerifiedAt: T.Union([T.String(), T.Null()]),
+  address: NullableText,
+  hasProfilePhoto: T.Boolean(),
+  profilePhotoUrl: T.Union([T.String(), T.Null()]),
   role: T.Union([T.Literal('admin'), T.Literal('user')]),
   status: T.Union([T.Literal('active'), T.Literal('suspended')]),
   mustChangePassword: T.Boolean(),
@@ -58,6 +66,22 @@ export function apiSchema(tag, summary, response, extra = {}, authenticated = tr
     ...extra,
   };
 }
+export const OtpRequestBody = object({
+  phone: Phone,
+});
+export const OtpRequestResponse = object({
+  accepted: T.Literal(true),
+  retryAfterSeconds: T.Integer(),
+  expiresInSeconds: T.Integer(),
+});
+export const OtpVerifyBody = object({
+  phone: Phone,
+  code: T.String({ minLength: 6, maxLength: 6, pattern: '^\\d{6}$' }),
+  clientType: T.Union([T.Literal('web'), T.Literal('native')]),
+  platform: T.Union([T.Literal('web'), T.Literal('android'), T.Literal('ios')]),
+  deviceName: DisplayName,
+  deviceId: T.Optional(Id),
+});
 export const LoginBody = object({
   username: Username,
   password: T.String({ minLength: 1, maxLength: 128 }),

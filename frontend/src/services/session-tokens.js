@@ -33,10 +33,11 @@ export function readCsrfCookie() {
   return null
 }
 
-export function applyTokens({ accessToken: nextAccess = null, csrfToken: nextCsrf = null } = {}) {
+export function applyTokens({ accessToken: nextAccess = null, csrfToken: nextCsrf = null } = {}, extra = null) {
   accessToken = nextAccess
   csrfToken = nextCsrf || readCsrfCookie()
   emit('tokens', { accessToken, csrfToken })
+  if (extra) emit('refreshed', extra)
 }
 
 export function clearTokens() {

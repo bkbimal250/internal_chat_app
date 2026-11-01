@@ -29,6 +29,55 @@
       "when": 1793281875906,
       "tag": "0003_neat_ricochet",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793370000000,
+      "tag": "0004_otp_profiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793380000000,
+      "tag": "0005_message_actions",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793400000000,
+      "tag": "0006_large_uploads",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793410000000,
+      "tag": "0007_retention",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793420000000,
+      "tag": "0008_push_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793430000000,
+      "tag": "0009_notification_prefs",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793442000000,
+      "tag": "0010_group_settings",
+      "breakpoints": true
     }
   ]
 }

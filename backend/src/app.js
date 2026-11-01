@@ -27,7 +27,10 @@ import { broadcaster } from './websocket/broadcaster.js';
 import { cleanupSessions } from './jobs/session-cleanup.job.js';
 import { cleanupAttachments } from './jobs/attachment-cleanup.job.js';
 import { objectStorage } from './services/object-storage.service.js';
+import { pushService } from './services/push.service.js';
 import attachmentRoutes from './modules/attachments/attachments.routes.js';
+import retentionRoutes from './modules/retention/retention.routes.js';
+import notifyRoutes from './modules/notify/notify.routes.js';
 
 export async function buildApp({ config = loadEnv() } = {}) {
   const app = Fastify({
@@ -46,6 +49,8 @@ export async function buildApp({ config = loadEnv() } = {}) {
   app.decorate('connections', new ConnectionManager());
   app.decorate('broadcaster', broadcaster(app));
   app.decorate('storage', objectStorage(config, app.log));
+  app.decorate('push', pushService(app, config));
+  if (config.nodeEnv === 'test') app.decorate('otpInbox', new Map());
   app.sessionEvents.on('revoked', ({ sessionIds }) => {
     for (const sessionId of sessionIds) {
       for (const userId of app.connections.closeSession(sessionId)) {
@@ -95,7 +100,32 @@ export async function buildApp({ config = loadEnv() } = {}) {
     await groupRoutes(app, config);
     await receiptRoutes(app, config);
     await attachmentRoutes(app, config);
+    await retentionRoutes(app, config);
+    await notifyRoutes(app);
     await registerWebsocket(app, config);
+    if (config.nodeEnv !== 'test') {
+      const listener = await database.pool.connect();
+      await listener.query('LISTEN retention');
+      listener.on('notification', (message) => {
+        try {
+          const payload = JSON.parse(message.payload);
+          if (payload.userId) app.broadcaster.user(payload.userId, payload.event, payload.data);
+          else if (payload.conversationId) {
+            app.broadcaster.conversation(payload.conversationId, payload.event, payload.data).catch(() => {});
+          }
+        } catch {
+          app.log.warn({ code: 'RETENTION_NOTIFY_FAILED' }, 'Unable to fan out retention event');
+        }
+      });
+      app.addHook('onClose', async () => {
+        try {
+          await listener.query('UNLISTEN retention');
+        } catch {
+          /* ignore */
+        }
+        listener.release();
+      });
+    }
     await app.storage.ensureBucket().catch((error) => {
       app.log.warn({ err: error, code: 'STORAGE_INIT_FAILED' }, 'Object storage bucket setup failed');
     });

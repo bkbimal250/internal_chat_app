@@ -1,15 +1,110 @@
 import { queryClient } from '@/lib/query-client'
 import { queryKeys } from '@/lib/query-keys'
-import { upsertMessage } from '@/lib/messages'
+import { applyConversationMessage } from '@/lib/conversations'
+import { removeMessage, upsertMessage } from '@/lib/messages'
+import { useAuthStore } from '@/stores/auth-store'
+
+function patchPerson(person, data) {
+  if (!person || person.id !== data.userId) return person
+  return {
+    ...person,
+    hasProfilePhoto: data.hasProfilePhoto,
+    photoVersion: data.photoVersion,
+    profilePhotoUrl: data.hasProfilePhoto ? person.profilePhotoUrl : null,
+    updatedAt: data.photoVersion || person.updatedAt,
+  }
+}
+
+export function syncUserPhoto(updated) {
+  if (!updated?.id) return
+  applyUserUpdated({
+    userId: updated.id,
+    hasProfilePhoto: Boolean(updated.hasProfilePhoto || updated.profilePhotoUrl),
+    photoVersion: updated.updatedAt,
+  })
+  const me = useAuthStore.getState().user
+  if (me?.id === updated.id) useAuthStore.setState({ user: updated })
+}
+
+function applyUserUpdated(data) {
+  if (!data.userId) return
+  queryClient.removeQueries({ queryKey: ['photo-url', data.userId] })
+  patchConversationList((rows) =>
+    rows.map((row) => ({
+      ...row,
+      members: row.members?.map((member) => patchPerson(member, data)),
+    })),
+  )
+  for (const [key, value] of queryClient.getQueriesData({ queryKey: ['conversation'] })) {
+    if (!value?.members) continue
+    queryClient.setQueryData(key, {
+      ...value,
+      members: value.members.map((member) => patchPerson(member, data)),
+    })
+  }
+  for (const [key, value] of queryClient.getQueriesData({ queryKey: ['directory'] })) {
+    if (value?.pages) {
+      queryClient.setQueryData(key, {
+        ...value,
+        pages: value.pages.map((page) => ({
+          ...page,
+          data: (page.data ?? []).map((person) => patchPerson(person, data)),
+        })),
+      })
+      continue
+    }
+    if (!value?.data) continue
+    queryClient.setQueryData(key, {
+      ...value,
+      data: value.data.map((person) => patchPerson(person, data)),
+    })
+  }
+  queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+  queryClient.invalidateQueries({ queryKey: queryKeys.me })
+  const me = useAuthStore.getState().user
+  if (me?.id === data.userId) {
+    useAuthStore.setState({
+      user: {
+        ...me,
+        hasProfilePhoto: Boolean(data.hasProfilePhoto),
+        profilePhotoUrl: data.hasProfilePhoto ? null : null,
+        updatedAt: data.photoVersion || me.updatedAt,
+      },
+    })
+  }
+}
 
 export function patchConversationList(updater) {
   queryClient.setQueryData(queryKeys.conversations, (current) => {
     if (!current?.data) return current
-    return { ...current, data: updater(current.data) }
+    const data = updater(current.data)
+    if (data === current.data) return current
+    return { ...current, data }
   })
 }
 
-export function applyRealtimeEvent(event, { currentUserId, onTyping, onPresence, onRevoked } = {}) {
+function patchGroupsList(conversationId, message, options) {
+  queryClient.setQueryData(queryKeys.groups, (current) => {
+    if (!Array.isArray(current) || !current.some((row) => row.id === conversationId)) return current
+    return applyConversationMessage(current, conversationId, message, options)
+  })
+}
+
+export function touchConversationFromMessage(conversationId, message) {
+  if (!conversationId || !message) return
+  const options = {
+    event: 'message.created',
+    currentUserId: useAuthStore.getState().user?.id,
+    viewedConversationId: conversationId,
+  }
+  patchConversationList((rows) => applyConversationMessage(rows, conversationId, message, options))
+  patchGroupsList(conversationId, message, options)
+}
+
+export function applyRealtimeEvent(
+  event,
+  { currentUserId, viewedConversationId = null, onTyping, onPresence, onRevoked } = {},
+) {
   if (!event?.event) return
   const data = event.data ?? {}
 
@@ -23,6 +118,11 @@ export function applyRealtimeEvent(event, { currentUserId, onTyping, onPresence,
     return
   }
 
+  if (event.event === 'user.updated') {
+    applyUserUpdated(data)
+    return
+  }
+
   if (event.event === 'typing.updated') {
     onTyping?.(data.conversationId, data.userId, data.typing === true)
     return
@@ -30,7 +130,30 @@ export function applyRealtimeEvent(event, { currentUserId, onTyping, onPresence,
 
   if (event.event === 'conversation.created' || event.event === 'conversation.updated') {
     queryClient.invalidateQueries({ queryKey: queryKeys.conversations })
-    if (data.id) queryClient.invalidateQueries({ queryKey: queryKeys.conversation(data.id) })
+    queryClient.invalidateQueries({ queryKey: queryKeys.groups })
+    if (data.id) {
+      queryClient.invalidateQueries({ queryKey: queryKeys.conversation(data.id) })
+      queryClient.invalidateQueries({ queryKey: queryKeys.group(data.id) })
+      queryClient.removeQueries({ queryKey: ['group-photo-url', data.id] })
+    }
+    return
+  }
+
+  if (event.event === 'notification.created') {
+    queryClient.invalidateQueries({ queryKey: queryKeys.notifications })
+    return
+  }
+
+  if (event.event === 'message.expired' || event.event === 'message.hidden') {
+    const conversationId = data.conversationId
+    if (!conversationId || !data.id) return
+    queryClient.setQueryData(queryKeys.messages(conversationId), (current) => ({
+      ...current,
+      data: removeMessage(current?.data ?? [], data.id),
+    }))
+    const options = { event: 'message.deleted', currentUserId, viewedConversationId }
+    patchConversationList((rows) => applyConversationMessage(rows, conversationId, data, options))
+    patchGroupsList(conversationId, data, options)
     return
   }
 
@@ -41,23 +164,14 @@ export function applyRealtimeEvent(event, { currentUserId, onTyping, onPresence,
       const list = current?.data ?? []
       return { ...current, data: upsertMessage(list, data) }
     })
-    patchConversationList((rows) =>
-      rows.map((row) => {
-        if (row.id !== conversationId) return row
-        const unread =
-          data.senderId && data.senderId !== currentUserId && event.event === 'message.created'
-            ? (row.unreadCount ?? 0) + 1
-            : row.unreadCount
-        return {
-          ...row,
-          latestMessage: event.event === 'message.created' ? data : row.latestMessage?.id === data.id ? { ...row.latestMessage, ...data } : row.latestMessage,
-          unreadCount: unread,
-          lastMessageSeq: data.sequenceNumber ?? row.lastMessageSeq,
-          lastChangeSeq: data.changeSeq ?? row.lastChangeSeq,
-          updatedAt: data.createdAt || row.updatedAt,
-        }
-      }),
-    )
+    const options = { event: event.event, currentUserId, viewedConversationId }
+    let missing = false
+    patchConversationList((rows) => {
+      missing = event.event === 'message.created' && !rows.some((row) => row.id === conversationId)
+      return applyConversationMessage(rows, conversationId, data, options)
+    })
+    patchGroupsList(conversationId, data, options)
+    if (missing) queryClient.invalidateQueries({ queryKey: queryKeys.conversations })
     return
   }
 

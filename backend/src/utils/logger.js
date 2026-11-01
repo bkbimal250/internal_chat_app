@@ -8,6 +8,10 @@ export function loggerOptions(config) {
       paths: [
         'password',
         'token',
+        'code',
+        'otp',
+        'twilioAuthToken',
+        'TWILIO_AUTH_TOKEN',
         'databaseUrl',
         'DATABASE_URL',
         'POSTGRES_PASSWORD',

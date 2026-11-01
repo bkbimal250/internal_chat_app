@@ -174,9 +174,58 @@ test(
       headers: header(sessionB),
     });
     assert.equal(download.statusCode, 200);
+    assert.equal(download.json().inline, true);
     const object = await fetch(download.json().url);
     assert.ok(object.ok);
     assert.equal(Buffer.from(await object.arrayBuffer()).equals(PNG), true);
+    const saveUrl = await app.inject({
+      method: 'GET',
+      url: `/api/v1/attachments/${finalized.json().attachment.id}/url?download=true`,
+      headers: header(sessionB),
+    });
+    assert.equal(saveUrl.statusCode, 200);
+    assert.equal(saveUrl.json().inline, false);
+
+    const multiInit = await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversationId}/attachments`,
+      headers: header(sessionA),
+      payload: {
+        fileName: 'pixel-multi.png',
+        mimeType: 'image/png',
+        sizeBytes: PNG.length,
+        strategy: 'multipart',
+      },
+    });
+    assert.equal(multiInit.statusCode, 201, multiInit.body);
+    assert.equal(multiInit.json().mode, 'multipart');
+    assert.ok(!multiInit.json().uploadUrl);
+    const signed = await app.inject({
+      method: 'POST',
+      url: `/api/v1/attachments/${multiInit.json().id}/parts`,
+      headers: header(sessionA),
+      payload: { partNumbers: [1] },
+    });
+    assert.equal(signed.statusCode, 200, signed.body);
+    const partPut = await fetch(signed.json().parts[0].uploadUrl, { method: 'PUT', body: PNG });
+    assert.ok(partPut.ok, `part PUT failed ${partPut.status}`);
+    const etag = partPut.headers.get('etag');
+    assert.ok(etag);
+    const listed = await app.inject({
+      method: 'GET',
+      url: `/api/v1/attachments/${multiInit.json().id}/parts`,
+      headers: header(sessionA),
+    });
+    assert.equal(listed.statusCode, 200, listed.body);
+    assert.equal(listed.json().parts.length, 1);
+    const multiFinal = await app.inject({
+      method: 'POST',
+      url: `/api/v1/attachments/${multiInit.json().id}/finalize`,
+      headers: header(sessionA),
+      payload: { clientMessageId: randomUUID(), parts: [{ partNumber: 1, etag }] },
+    });
+    assert.equal(multiFinal.statusCode, 201, multiFinal.body);
+    assert.equal(multiFinal.json().attachment.status, 'available');
 
     const denied = await app.inject({
       method: 'GET',
@@ -205,7 +254,7 @@ test(
       method: 'POST',
       url: `/api/v1/conversations/${conversationId}/attachments`,
       headers: header(sessionA),
-      payload: { fileName: 'huge.png', mimeType: 'image/png', sizeBytes: 11 * 1024 * 1024 },
+      payload: { fileName: 'huge.png', mimeType: 'image/png', sizeBytes: 26 * 1024 * 1024 },
     });
     assert.equal(oversized.statusCode, 413);
 

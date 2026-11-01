@@ -36,20 +36,31 @@ export class ConnectionManager {
   session(id) {
     return this.bySession.get(id) ?? new Set();
   }
+  closeSocket(c, reason) {
+    try {
+      if (c.socket.readyState === 1) c.socket.send(JSON.stringify(envelope(reason, {})));
+      if (c.socket.readyState < 2) c.socket.close(4001, reason);
+    } catch {
+      try {
+        c.socket.terminate();
+      } catch {
+        /* already closed */
+      }
+    }
+  }
   closeSession(id, reason = 'session.revoked') {
     const offlineUserIds = [];
     for (const c of [...this.session(id)]) {
       if (this.remove(c)) offlineUserIds.push(c.userId);
-      try {
-        if (c.socket.readyState === 1) c.socket.send(JSON.stringify(envelope(reason, {})));
-        if (c.socket.readyState < 2) c.socket.close(4001, reason);
-      } catch {
-        try {
-          c.socket.terminate();
-        } catch {
-          /* already closed */
-        }
-      }
+      this.closeSocket(c, reason);
+    }
+    return offlineUserIds;
+  }
+  closeUser(userId, reason = 'session.revoked') {
+    const offlineUserIds = [];
+    for (const c of [...this.user(userId)]) {
+      if (this.remove(c)) offlineUserIds.push(c.userId);
+      this.closeSocket(c, reason);
     }
     return offlineUserIds;
   }

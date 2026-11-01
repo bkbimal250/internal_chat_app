@@ -54,6 +54,14 @@ export function loadEnv(source = process.env) {
     jwtAudience: source.JWT_AUDIENCE ?? 'company-chat-clients',
     refreshTokenDays: integer('REFRESH_TOKEN_DAYS', 30, 1, 90),
     authRateLimit: integer('AUTH_RATE_LIMIT', 10, 1, 1000),
+    otpRateLimit: integer('OTP_RATE_LIMIT', 8, 1, 1000),
+    otpTtlSeconds: integer('OTP_TTL_SECONDS', 300, 30, 900),
+    otpResendSeconds: integer('OTP_RESEND_SECONDS', 60, 10, 300),
+    otpMaxAttempts: integer('OTP_MAX_ATTEMPTS', 5, 1, 10),
+    otpMaxPerHour: integer('OTP_MAX_PER_HOUR', 5, 1, 50),
+    twilioAccountSid: source.TWILIO_ACCOUNT_SID ?? '',
+    twilioAuthToken: source.TWILIO_AUTH_TOKEN ?? '',
+    twilioFromNumber: source.TWILIO_FROM_NUMBER ?? '',
     groupMemberLimit: integer('GROUP_MEMBER_LIMIT', 1000, 2, 10000),
     wsHeartbeatIntervalMs: integer(
       'WS_HEARTBEAT_INTERVAL_MS',
@@ -62,6 +70,12 @@ export function loadEnv(source = process.env) {
       60000,
     ),
     cleanupIntervalMs: integer('SESSION_CLEANUP_INTERVAL_MS', 3600000, 60000, 86400000),
+    retentionWorkerIntervalMs: integer(
+      'RETENTION_WORKER_INTERVAL_MS',
+      300000,
+      nodeEnv === 'test' ? 50 : 60000,
+      86400000,
+    ),
     s3Endpoint: source.S3_ENDPOINT ?? '',
     s3PublicEndpoint: source.S3_PUBLIC_ENDPOINT ?? source.S3_ENDPOINT ?? '',
     s3Region: source.S3_REGION ?? 'us-east-1',
@@ -69,16 +83,17 @@ export function loadEnv(source = process.env) {
     s3AccessKey: source.S3_ACCESS_KEY ?? '',
     s3SecretKey: source.S3_SECRET_KEY ?? '',
     s3ForcePathStyle: source.S3_FORCE_PATH_STYLE !== 'false',
-    s3UploadTtlSeconds: integer('S3_UPLOAD_TTL_SECONDS', 300, 30, 3600),
+    s3UploadTtlSeconds: integer('S3_UPLOAD_TTL_SECONDS', 900, 30, 3600),
     s3DownloadTtlSeconds: integer('S3_DOWNLOAD_TTL_SECONDS', 60, 15, 600),
-    attachmentPendingTtlMs: integer('ATTACHMENT_PENDING_TTL_MS', 900000, 60000, 86400000),
+    attachmentPendingTtlMs: integer('ATTACHMENT_PENDING_TTL_MS', 7200000, 60000, 86400000),
     attachmentDailyQuotaBytes: integer(
       'ATTACHMENT_DAILY_QUOTA_BYTES',
-      209715200,
+      8589934592,
       1024 * 1024,
       10 * 1024 * 1024 * 1024,
     ),
-    attachmentRateLimit: integer('ATTACHMENT_RATE_LIMIT', 20, 1, 1000),
+    attachmentRateLimit: integer('ATTACHMENT_RATE_LIMIT', 60, 1, 1000),
+    firebaseServiceAccountPath: source.FIREBASE_SERVICE_ACCOUNT_PATH ?? '',
     host: source.HOST ?? '0.0.0.0',
     port: integer('PORT', 3001, 1, 65535),
     dbPoolMax: integer('DB_POOL_MAX', 10, 1, 100),
@@ -93,7 +108,13 @@ export function loadEnv(source = process.env) {
   if (nodeEnv === 'production' && corsOrigins.some((origin) => !origin.startsWith('https://'))) {
     errors.push('Production CORS_ORIGINS must use HTTPS');
   }
+  if (config.twilioFromNumber && !/^\+[1-9]\d{7,14}$/.test(config.twilioFromNumber)) {
+    errors.push('TWILIO_FROM_NUMBER must be an E.164 phone number');
+  }
   if (nodeEnv === 'production') {
+    if (!config.twilioAccountSid.trim() || !config.twilioAuthToken.trim() || !config.twilioFromNumber.trim()) {
+      errors.push('Production Twilio credentials are required');
+    }
     if (!config.s3Endpoint.trim() || !config.s3AccessKey.trim() || !config.s3SecretKey.trim()) {
       errors.push('Production S3 endpoint and credentials are required');
     }

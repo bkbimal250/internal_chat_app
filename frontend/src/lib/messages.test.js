@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   applySyncRecords,
+  canCopyMessage,
+  canDeleteForEveryone,
+  canDeleteForMe,
+  canDownloadMessage,
   canMutateMessage,
+  canReplyPrivately,
   newestChangeSeq,
   newestSequence,
   receiptStatus,
+  removeMessage,
   upsertMessage,
+  visibleMessages,
 } from '@/lib/messages'
 
 const base = {
@@ -44,6 +51,29 @@ describe('message cache', () => {
     expect(canMutateMessage(base, 'u1')).toBe(true)
     expect(canMutateMessage(base, 'u2')).toBe(false)
     expect(canMutateMessage(old, 'u1')).toBe(false)
+  })
+
+  it('applies WhatsApp delete and copy rules', () => {
+    const old = { ...base, createdAt: new Date(Date.now() - 16 * 60 * 1000).toISOString() }
+    expect(canDeleteForMe(base)).toBe(true)
+    expect(canDeleteForMe({ ...base, messageType: 'system' })).toBe(false)
+    expect(canDeleteForEveryone(base, { currentUserId: 'u1', conversationType: 'direct' })).toBe(true)
+    expect(canDeleteForEveryone(base, { currentUserId: 'u1', conversationType: 'group' })).toBe(false)
+    expect(canDeleteForEveryone(base, { currentUserId: 'u2', conversationType: 'direct' })).toBe(false)
+    expect(canDeleteForEveryone(old, { currentUserId: 'u1', conversationType: 'direct' })).toBe(false)
+    expect(canCopyMessage(base)).toBe(true)
+    expect(canCopyMessage({ ...base, deletedAt: new Date().toISOString() })).toBe(false)
+    expect(canDownloadMessage({ ...base, attachment: { id: 'a1', status: 'available' } })).toBe(true)
+    expect(canDownloadMessage(base)).toBe(false)
+    expect(canReplyPrivately(base, { currentUserId: 'u2', isGroup: true })).toBe(true)
+    expect(canReplyPrivately(base, { currentUserId: 'u1', isGroup: true })).toBe(false)
+    expect(canReplyPrivately(base, { currentUserId: 'u2', isGroup: false })).toBe(false)
+    expect(removeMessage([base, { ...base, id: 'm2' }], 'm1')).toEqual([{ ...base, id: 'm2' }])
+  })
+
+  it('hides expired messages from the visible transcript', () => {
+    expect(visibleMessages([base, { ...base, id: 'm2', expiredAt: new Date().toISOString() }])).toEqual([base])
+    expect(canMutateMessage({ ...base, expiredAt: new Date().toISOString() }, 'u1')).toBe(false)
   })
 
   it('derives sent delivered and read ticks', () => {

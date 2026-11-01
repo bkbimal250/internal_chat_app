@@ -21,6 +21,9 @@ export const conversations = pgTable(
     title: varchar('title', { length: 120 }),
     description: text('description'),
     avatarReference: varchar('avatar_reference', { length: 512 }),
+    editInfoPolicy: varchar('edit_info_policy', { length: 16 }).notNull().default('admins'),
+    sendMessagesPolicy: varchar('send_messages_policy', { length: 16 }).notNull().default('all'),
+    addMembersPolicy: varchar('add_members_policy', { length: 16 }).notNull().default('admins'),
     createdBy: uuid('created_by')
       .notNull()
       .references(() => users.id, { onDelete: 'restrict' }),

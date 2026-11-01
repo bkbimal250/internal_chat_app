@@ -4,12 +4,16 @@ import {
   DirectoryUser,
   IdParams,
   PageQuery,
+  PhotoCompleteBody,
+  PhotoInitBody,
+  PhotoInitResponse,
+  PhotoUrlResponse,
   UpdateMe,
   User,
   pageOf,
 } from './users.schema.js';
-export default async function userRoutes(app) {
-  const c = usersController(app);
+export default async function userRoutes(app, config) {
+  const c = usersController(app, config);
   app.get(
     '/api/v1/users',
     {
@@ -32,6 +36,39 @@ export default async function userRoutes(app) {
       preHandler: app.authenticate,
     },
     c.updateMe,
+  );
+  app.post(
+    '/api/v1/users/me/photo',
+    {
+      schema: apiSchema('Users', 'Start profile photo upload', PhotoInitResponse, {
+        body: PhotoInitBody,
+      }),
+      preHandler: app.authenticate,
+    },
+    c.initPhoto,
+  );
+  app.post(
+    '/api/v1/users/me/photo/complete',
+    {
+      schema: apiSchema('Users', 'Finalize profile photo upload', User, {
+        body: PhotoCompleteBody,
+      }),
+      preHandler: app.authenticate,
+    },
+    c.completePhoto,
+  );
+  app.delete(
+    '/api/v1/users/me/photo',
+    { schema: apiSchema('Users', 'Remove own profile photo', User), preHandler: app.authenticate },
+    c.removePhoto,
+  );
+  app.get(
+    '/api/v1/users/:id/photo-url',
+    {
+      schema: apiSchema('Users', 'Signed profile photo URL', PhotoUrlResponse, { params: IdParams }),
+      preHandler: app.authenticate,
+    },
+    c.photoUrl,
   );
   app.get(
     '/api/v1/users/:id',

@@ -60,8 +60,12 @@ if [[ "$SKIP_MIGRATE" -eq 0 ]]; then
   compose --profile migrate run --rm --no-deps migrate
 fi
 
-echo "Recreating changed application services only (postgres and object storage stay running)"
-compose up -d --no-deps --no-build --pull never api web retention-worker caddy
+mapfile -t services < <(app_services)
+echo "Recreating application services only: ${services[*]}"
+if vps_mode; then
+  echo "Host Nginx and host PostgreSQL are not managed by Compose"
+fi
+compose up -d --no-deps --no-build --pull never "${services[@]}"
 
 if ! "$ROOT_DIR/deploy/healthcheck.sh"; then
   echo "Deployment health checks failed; restoring ${previous:-previous images}" >&2

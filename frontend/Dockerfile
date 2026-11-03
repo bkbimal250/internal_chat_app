@@ -5,7 +5,11 @@ RUN npm ci && npm cache clean --force
 COPY . .
 ARG VITE_API_BASE_URL=
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
-RUN npm run build
+RUN npm run build \
+  && if [ -n "$VITE_API_BASE_URL" ]; then \
+       grep -R --fixed-strings "$VITE_API_BASE_URL" dist >/dev/null \
+         || { echo "Vite build did not embed VITE_API_BASE_URL" >&2; exit 1; }; \
+     fi
 
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/nginx.conf

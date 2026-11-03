@@ -51,6 +51,10 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - name: Confirm production API origin is embedded
+        run: |
+          VITE_API_BASE_URL=https://api.michat.in npm run build
+          grep -R --fixed-strings 'https://api.michat.in' dist
       - name: Production dependency audit
         continue-on-error: true
         run: npm audit --omit=dev --audit-level=high
@@ -65,6 +69,8 @@ jobs:
         run: docker compose --env-file deploy/.env.production.example -f docker-compose.prod.yml config --quiet
       - name: Validate production Compose (in-cluster LocalStack)
         run: docker compose --env-file deploy/.env.production.example -f docker-compose.prod.yml -f docker-compose.prod.local-s3.yml config --quiet
+      - name: Validate VPS Compose (host Nginx and host PostgreSQL)
+        run: docker compose --env-file deploy/.env.vps.example -f docker-compose.prod.vps.yml config --quiet
       - name: Confirm production Compose has no application build keys
         run: |
           if docker compose --env-file deploy/.env.production.example -f docker-compose.prod.yml config | grep -E '^\s+build:'; then
@@ -90,5 +96,7 @@ jobs:
           file: ./frontend/Dockerfile
           push: false
           load: false
+          build-args: |
+            VITE_API_BASE_URL=https://api.michat.in
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=min,scope=web

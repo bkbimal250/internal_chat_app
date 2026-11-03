@@ -37,6 +37,10 @@ Create GitHub Environment `production`. Require reviewers if more than one opera
 | Name | Value |
 | --- | --- |
 | `DEPLOY_ENABLED` | leave unset or `false` until you authorize the first live deploy |
+| `PUBLIC_API_ORIGIN` | `https://api.michat.in` (baked into the React image) |
+
+This VPS uses host Nginx and host PostgreSQL. Follow `deploy/VPS.md` instead of
+starting Caddy or a Postgres container.
 
 ### GitHub secrets (environment `production` only)
 

@@ -23,7 +23,11 @@ check "api ready" compose exec -T api node -e \
 check "worker live" compose exec -T retention-worker node -e \
   "fetch('http://127.0.0.1:3002/health/live',{signal:AbortSignal.timeout(4000)}).then(async r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 check "web live" compose exec -T web wget -qO- http://127.0.0.1:8080/healthz >/dev/null
-check "postgres" compose exec -T postgres pg_isready -U "${POSTGRES_USER:-company_chat}" -d "${POSTGRES_DB:-company_chat}"
+if vps_mode; then
+  echo "ok  postgres (host PostgreSQL; verified via api ready)"
+else
+  check "postgres" compose exec -T postgres pg_isready -U "${POSTGRES_USER:-company_chat}" -d "${POSTGRES_DB:-company_chat}"
+fi
 if storage_in_cluster; then
   check "storage" compose exec -T storage curl -fsS http://127.0.0.1:4566/_localstack/health >/dev/null
 else

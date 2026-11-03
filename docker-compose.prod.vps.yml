@@ -1,0 +1,117 @@
+name: internal-chat
+
+# VPS stack for a host that already runs Nginx (80/443) and PostgreSQL 16.
+# Pulls prebuilt GHCR images only. Never builds source. Never starts Caddy or Postgres.
+#
+# Persistent services: web, api, retention-worker
+# One-shot: migrate (profile "migrate")
+#
+# Host Nginx must proxy 127.0.0.1:${WEB_HOST_PORT} and 127.0.0.1:${API_HOST_PORT}.
+# Application containers reach host PostgreSQL via host.docker.internal (Docker host-gateway).
+# Do not set the database host to 172.17.0.1.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app-security: &app-security
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+x-host-gateway: &host-gateway
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  web:
+    image: ${WEB_IMAGE:?WEB_IMAGE is required}
+    <<: *app-security
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-3046}:8080"
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 128m
+    cpus: 0.25
+    networks: [app]
+
+  api:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    <<: [*app-security, *host-gateway]
+    env_file:
+      - ${PROD_ENV_FILE:-.env.production}
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3001
+      NODE_ENV: production
+      TRUST_PROXY: "1"
+      GIT_SHA: ${IMAGE_TAG:-unknown}
+      FIREBASE_SERVICE_ACCOUNT_PATH: /app/secrets/firebase-service-account.json
+    volumes:
+      - ${FIREBASE_SECRET_PATH:-./deploy/secrets/firebase-unconfigured.json}:/app/secrets/firebase-service-account.json:ro
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-3045}:3001"
+    stop_grace_period: 75s
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 512m
+    cpus: 1.0
+    networks: [app]
+
+  retention-worker:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    <<: [*app-security, *host-gateway]
+    command: ["node", "src/workers/retention.worker.js"]
+    env_file:
+      - ${PROD_ENV_FILE:-.env.production}
+    environment:
+      NODE_ENV: production
+      GIT_SHA: ${IMAGE_TAG:-unknown}
+      RETENTION_WORKER_INTERVAL_MS: ${RETENTION_WORKER_INTERVAL_MS:-300000}
+      FIREBASE_SERVICE_ACCOUNT_PATH: /app/secrets/firebase-service-account.json
+    volumes:
+      - ${FIREBASE_SECRET_PATH:-./deploy/secrets/firebase-unconfigured.json}:/app/secrets/firebase-service-account.json:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health/live',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 4s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 256m
+    cpus: 0.5
+    networks: [app]
+
+  migrate:
+    profiles: [migrate]
+    image: ${API_IMAGE:?API_IMAGE is required}
+    <<: [*app-security, *host-gateway]
+    command: ["node", "src/database/migrate.js"]
+    env_file:
+      - ${PROD_ENV_FILE:-.env.production}
+    environment:
+      NODE_ENV: production
+    restart: "no"
+    logging: *default-logging
+    mem_limit: 256m
+    cpus: 0.5
+    networks: [app]
+
+networks:
+  app:
+    driver: bridge

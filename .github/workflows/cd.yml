@@ -15,6 +15,7 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_TAG: sha-${{ github.sha }}
+  VITE_API_BASE_URL: https://api.michat.in
 
 jobs:
   ci:
@@ -65,6 +66,8 @@ jobs:
           file: ./frontend/Dockerfile
           push: true
           tags: ${{ env.WEB_IMAGE }}:${{ env.IMAGE_TAG }}
+          build-args: |
+            VITE_API_BASE_URL=${{ env.VITE_API_BASE_URL }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
           provenance: false
@@ -110,7 +113,7 @@ jobs:
           ssh -i ~/.ssh/deploy_key -p "${PORT}" "${VPS_USER}@${VPS_HOST}" \
             "mkdir -p '${DIR}/deploy' '${DIR}/secrets' '${DIR}/backups'"
           rsync -az -e "ssh -i ~/.ssh/deploy_key -p ${PORT}" \
-            docker-compose.prod.yml docker-compose.prod.local-s3.yml \
+            docker-compose.prod.yml docker-compose.prod.local-s3.yml docker-compose.prod.vps.yml \
             "${VPS_USER}@${VPS_HOST}:${DIR}/"
           rsync -az -e "ssh -i ~/.ssh/deploy_key -p ${PORT}" \
             deploy/ \

@@ -25,4 +25,11 @@ describe('API origin', () => {
   it('derives ws from an explicit HTTP API origin', () => {
     expect(resolveWsUrl('http://127.0.0.1:3001')).toBe('ws://127.0.0.1:3001/api/v1/ws')
   })
+
+  it('uses the production API origin and derives wss', () => {
+    expect(resolveApiBaseUrl({ viteApiBaseUrl: 'https://api.michat.in/', isProd: true })).toBe(
+      'https://api.michat.in',
+    )
+    expect(resolveWsUrl('https://api.michat.in')).toBe('wss://api.michat.in/api/v1/ws')
+  })
 })

@@ -2,8 +2,9 @@
 
 Canonical operator docs:
 
+- [`VPS.md`](VPS.md) — this VPS (host Nginx + host PostgreSQL)
 - [`../PRODUCTION_AUDIT.md`](../PRODUCTION_AUDIT.md)
 - [`../PRODUCTION_CREDENTIALS_CHECKLIST.md`](../PRODUCTION_CREDENTIALS_CHECKLIST.md)
 - [`../DEPLOYMENT_GUIDE.md`](../DEPLOYMENT_GUIDE.md)
 
-This directory holds the Caddyfile, example env, and pull-only scripts. The VPS never builds images.
+Nginx vhosts for review: [`nginx/`](nginx/). The VPS never builds images.

@@ -16,6 +16,10 @@ function loadMessaging(config, logger) {
   }
   try {
     const credentials = JSON.parse(readFileSync(path, 'utf8'));
+    if (!credentials.private_key || !credentials.client_email) {
+      logger?.info({ code: 'PUSH_UNCONFIGURED' }, 'Firebase service account not configured; push disabled');
+      return null;
+    }
     if (!getApps().length) initializeApp({ credential: cert(credentials) });
     return getMessaging();
   } catch (error) {

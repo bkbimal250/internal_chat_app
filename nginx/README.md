@@ -1,5 +1,6 @@
-This directory is reserved for a future Nginx reverse proxy configuration.
-Phase 1 uses the API bound to localhost:3001. No proxy or TLS certificates are
-required. A future proxy should share the internal network with api, forward to
-api:3001, and have its own ingress network. Configure trusted proxy addresses in
-Fastify when introducing that deployment; do not trust arbitrary forwarded headers.
+Nginx now ships inside the frontend image (`frontend/nginx.conf`) and terminates
+only internal HTTP on port 8080. Public HTTPS/WSS is handled by Caddy
+(`deploy/Caddyfile`) on ports 80 and 443.
+
+Do not publish PostgreSQL or LocalStack ports. The API trusts `X-Forwarded-*`
+only when `TRUST_PROXY=1`.

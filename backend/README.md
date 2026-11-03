@@ -351,11 +351,12 @@ Phase 2 environment settings:
 | REFRESH_TOKEN_DAYS | Refresh-token absolute lifetime; 1–90 days. |
 | AUTH_RATE_LIMIT | Per-IP login and refresh attempts per minute. |
 | OTP_RATE_LIMIT | Per-IP OTP request/verify attempts per minute. |
-| OTP_TTL_SECONDS | SMS one-time code lifetime (30–900 seconds). |
+| OTP_TTL_SECONDS | SMS one-time code lifetime (30–900 seconds). Default 60 to match the DLT template. |
 | OTP_RESEND_SECONDS | Minimum delay before another code can be sent to the same number. |
 | OTP_MAX_ATTEMPTS | Failed verification attempts allowed per challenge. |
 | OTP_MAX_PER_HOUR | Maximum OTP challenges stored per phone number per hour. |
-| TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER | Twilio SMS credentials. Required in production. Local development skips sending when empty. |
+| SMS_USERNAME / SMS_API_KEY / SMS_TEMPLATE_ID | Hilite Multimedia DLT SMS credentials. Required in production. Local development skips sending when empty. |
+| SMS_SENDER / SMS_ROUTE | Registered sender and route; defaults `SPAADV` and `ServiceImplicit`. |
 | SESSION_CLEANUP_INTERVAL_MS | Expired-session/consumed-token cleanup interval. |
 | BOOTSTRAP_ADMIN_* | One-time bootstrap command input only; do not set for normal API runtime. |
 

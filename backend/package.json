@@ -12,6 +12,7 @@
     "worker:retention": "node --env-file-if-exists=.env src/workers/retention.worker.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:runtime": "node src/database/migrate.js",
     "db:studio": "drizzle-kit studio",
     "bootstrap:admin": "node --env-file-if-exists=.env src/database/seed/bootstrap-admin.js",
     "recover:admin": "node --env-file-if-exists=.env src/database/seed/recover-admin.js",
@@ -39,7 +40,6 @@
     "pg": "^8.23.1",
     "pino": "^10.4.0",
     "sharp": "^0.35.5",
-    "twilio": "^6.2.0",
     "ws": "^8.22.0"
   },
   "overrides": {

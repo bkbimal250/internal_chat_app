@@ -1,0 +1,15 @@
+node_modules
+dist
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+coverage
+e2e
+playwright-report
+test-results
+*.md
+VERIFICATION.md
+.prettier*
+eslint.config.js

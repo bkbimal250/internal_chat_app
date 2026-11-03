@@ -34,7 +34,7 @@ function dayKey(date) {
   return new Date(date).toISOString().slice(0, 10);
 }
 
-function conversationTitle(row, userId) {
+function conversationTitle(row, _userId) {
   if (row.type === 'group') return row.title || 'Group';
   return row.title || 'Chat';
 }

@@ -62,9 +62,20 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> replaceConversation(String conversationId, List<Map<String, dynamic>> messages) async {
     await transaction(() async {
+      final existing = await (select(cachedMessages)..where((row) => row.conversationId.equals(conversationId))).get();
+      final pending = <Map<String, dynamic>>[];
+      for (final row in existing) {
+        final payload = jsonDecode(row.payload) as Map<String, dynamic>;
+        if (payload['pending'] == true || payload['failed'] == true) pending.add(payload);
+      }
       await (delete(cachedMessages)..where((row) => row.conversationId.equals(conversationId))).go();
       for (final message in messages) {
         await upsertMessage(message);
+      }
+      for (final draft in pending) {
+        final id = draft['clientMessageId'] ?? draft['id'];
+        final already = messages.any((row) => row['id'] == id || row['clientMessageId'] == id);
+        if (!already) await upsertMessage(draft);
       }
     });
   }

@@ -1,0 +1,239 @@
+Company Chat — local run steps (Windows)
+Project root:
+  C:\Users\ADMIN\Desktop\Bimal Works\Bimal Works\internal-chat
+
+Use PowerShell. Keep Docker Desktop running before any docker command.
+Do NOT run: docker compose down -v
+Do NOT run: docker volume prune
+Those delete PostgreSQL data, S3 files, and employee accounts.
+
+
+============================================================
+0) One-time software
+============================================================
+
+Install and open:
+  - Docker Desktop (Linux containers)
+  - Android Studio
+  - Flutter SDK (flutter doctor should be clean)
+  - Node.js 24 only if you run frontend outside Docker
+
+In Android Studio:
+  1. Open SDK Manager and install Android SDK + a system image
+  2. Device Manager -> Create a Virtual Device (Pixel 9 is fine)
+  3. Cold Boot the emulator at least once so it appears to Flutter
+
+First-time project env (only if backend\.env does not already exist):
+  cd "C:\Users\ADMIN\Desktop\Bimal Works\Bimal Works\internal-chat"
+  Copy-Item backend\.env.example backend\.env
+  Copy-Item frontend\.env.example frontend\.env
+
+Then edit backend\.env:
+  POSTGRES_PASSWORD=your-existing-password   (do not invent a new one if data already exists)
+  JWT_SECRET=already-set-value
+  SMS_USERNAME=your-hilite-username
+  SMS_API_KEY=your-hilite-api-key
+  SMS_TEMPLATE_ID=your-dlt-template-id
+  SMS_SENDER=SPAADV
+  SMS_ROUTE=ServiceImplicit
+  OTP_TTL_SECONDS=60
+
+If backend\.env already exists, keep it. Do not overwrite it.
+
+
+============================================================
+1) Start Docker Desktop
+============================================================
+
+Start-Process "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+
+Wait until the whale icon is idle, then check:
+  docker info
+  docker compose version
+
+
+============================================================
+2) Start the server (API + Postgres + S3 + retention worker)
+============================================================
+
+cd "C:\Users\ADMIN\Desktop\Bimal Works\Bimal Works\internal-chat"
+docker compose up -d
+
+First start, or after backend code changes:
+  docker compose up -d --build
+
+Check containers:
+  docker compose ps
+
+Expected healthy services:
+  api
+  postgres
+  storage
+  retention-worker
+
+Health checks:
+  Invoke-RestMethod http://127.0.0.1:3001/health/live
+  Invoke-RestMethod http://127.0.0.1:3001/health/ready
+
+Useful logs:
+  docker compose logs --tail=80 api
+  docker compose logs --tail=80 postgres
+
+After changing backend\.env:
+  docker compose up -d api --no-deps --force-recreate
+
+After changing backend source:
+  docker compose up -d --build api --no-deps
+
+
+============================================================
+3) Start the web app (optional)
+============================================================
+
+cd "C:\Users\ADMIN\Desktop\Bimal Works\Bimal Works\internal-chat\frontend"
+npm ci
+npm run dev
+
+Open:
+  http://127.0.0.1:5173
+
+Do not use http://localhost:5173 (cookies break).
+
+
+============================================================
+4) Start Android Studio / emulator
+============================================================
+
+Open Android Studio, then either:
+
+A) Device Manager -> Play on Pixel 9 (or your AVD)
+
+B) From PowerShell:
+  flutter emulators
+  flutter emulators --launch Pixel_9
+
+Wait until the emulator home screen is up:
+  adb devices
+
+You should see:
+  emulator-5554    device
+
+If it says "offline" or "authorizing", wait 10–20 seconds and run adb devices again.
+
+
+============================================================
+5) Run the Flutter mobile app
+============================================================
+
+The Docker API from step 2 must already be healthy.
+
+cd "C:\Users\ADMIN\Desktop\Bimal Works\Bimal Works\internal-chat\mobile\company_chat"
+flutter pub get
+flutter devices
+
+Android emulator:
+  flutter run -d emulator-5554 --dart-define=API_BASE_URL=http://10.0.2.2:3001 --dart-define=WS_URL=ws://10.0.2.2:3001/api/v1/ws
+
+If the device id is different, copy it from "flutter devices".
+
+Physical Android phone on the same Wi-Fi:
+  1. Enable Developer options + USB debugging
+  2. Connect USB, accept the RSA prompt
+  3. Find your PC LAN IP, for example 192.168.1.20:
+       ipconfig
+  4. Run:
+       flutter run -d <device-id> --dart-define=API_BASE_URL=http://192.168.1.20:3001 --dart-define=WS_URL=ws://192.168.1.20:3001/api/v1/ws
+  5. Windows Firewall must allow inbound TCP 3001
+
+While flutter run is attached:
+  r  = hot reload
+  R  = hot restart
+  q  = quit
+
+
+============================================================
+6) Open the project in Android Studio (optional)
+============================================================
+
+Android Studio -> Open ->
+  C:\Users\ADMIN\Desktop\Bimal Works\Bimal Works\internal-chat\mobile\company_chat
+
+Wait for Gradle + pub get.
+Select the emulator at the top, then click Run.
+
+If you run from Android Studio, add Dart defines in:
+  Run -> Edit Configurations -> Additional run args:
+
+  --dart-define=API_BASE_URL=http://10.0.2.2:3001 --dart-define=WS_URL=ws://10.0.2.2:3001/api/v1/ws
+
+
+============================================================
+7) Daily start (shortest path)
+============================================================
+
+1. Open Docker Desktop and wait until it is ready
+2. Open Android Studio and start the emulator
+3. PowerShell:
+
+cd "C:\Users\ADMIN\Desktop\Bimal Works\Bimal Works\internal-chat"
+docker compose up -d
+Invoke-RestMethod http://127.0.0.1:3001/health/ready
+
+cd "C:\Users\ADMIN\Desktop\Bimal Works\Bimal Works\internal-chat\mobile\company_chat"
+flutter run -d emulator-5554 --dart-define=API_BASE_URL=http://10.0.2.2:3001 --dart-define=WS_URL=ws://10.0.2.2:3001/api/v1/ws
+
+
+============================================================
+8) Stop (safe)
+============================================================
+
+Stop Flutter: press q in the flutter run terminal, or close the emulator.
+
+Stop web: Ctrl+C in the npm run dev terminal.
+
+Stop containers but KEEP all data:
+  cd "C:\Users\ADMIN\Desktop\Bimal Works\Bimal Works\internal-chat"
+  docker compose stop
+
+Start them again later:
+  docker compose start
+
+or:
+  docker compose up -d
+
+
+============================================================
+9) Never run these
+============================================================
+
+docker compose down -v
+docker volume prune
+docker compose down --volumes
+Any database reset / recreate schema from scratch
+
+Those destroy:
+  employee accounts
+  chat history
+  group memberships
+  S3 files
+  push tokens
+
+
+============================================================
+10) URLs and ports
+============================================================
+
+API live:     http://127.0.0.1:3001/health/live
+API ready:    http://127.0.0.1:3001/health/ready
+API:          http://127.0.0.1:3001
+WebSocket:    ws://127.0.0.1:3001/api/v1/ws
+Web app:      http://127.0.0.1:5173
+LocalStack:   http://127.0.0.1:4566   (bound to localhost only)
+
+Android emulator reaches the host API at:
+  http://10.0.2.2:3001
+  ws://10.0.2.2:3001/api/v1/ws
+
+OTP SMS uses the Spa Advisor DLT template via Hilite.
+Empty SMS_USERNAME / SMS_API_KEY / SMS_TEMPLATE_ID means the API accepts OTP
+requests but does not send a real SMS.

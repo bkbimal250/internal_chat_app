@@ -3,5 +3,12 @@ node_modules
 .env.*
 !.env.example
 .git
+.gitignore
 coverage
 *.log
+src/tests
+secrets
+*.md
+VERIFICATION.md
+.prettier*
+eslint.config.js

@@ -40,6 +40,7 @@ export async function buildApp({ config = loadEnv() } = {}) {
     bodyLimit: BODY_LIMIT_BYTES,
     requestTimeout: 30000,
     return503OnClosing: true,
+    trustProxy: config.trustProxy,
     ajv: { customOptions: { removeAdditional: false, allErrors: false } },
   });
   const database = createDatabase(config, app.log);
@@ -71,12 +72,18 @@ export async function buildApp({ config = loadEnv() } = {}) {
     await registerAuthentication(app, config);
     registerAuthorization(app);
     await registerRateLimit(app);
-    app.get('/health/live', async () => ({ status: 'ok', service: SERVICE_NAME }));
+    app.get('/health/live', async () => {
+      const payload = { status: 'ok', service: SERVICE_NAME };
+      if (process.env.GIT_SHA) payload.version = process.env.GIT_SHA;
+      return payload;
+    });
     app.get('/health/ready', async (request, reply) => {
       try {
         await database.check();
         const storage = await app.storage.ready();
-        return { status: 'ready', database: 'connected', storage };
+        const payload = { status: 'ready', database: 'connected', storage };
+        if (process.env.GIT_SHA) payload.version = process.env.GIT_SHA;
+        return payload;
       } catch {
         request.log.warn({ code: 'DATABASE_UNAVAILABLE' }, 'Readiness check failed');
         return reply.code(503).send({

@@ -1,0 +1,67 @@
+name: Mobile
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: Production HTTPS API origin, for example https://chat.example.com
+        required: true
+        type: string
+      ws_url:
+        description: Production WSS endpoint, for example wss://chat.example.com/api/v1/ws
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android release APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile/company_chat
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - name: Build APK
+        run: >
+          flutter build apk --release
+          --dart-define=API_BASE_URL=${{ inputs.api_base_url }}
+          --dart-define=WS_URL=${{ inputs.ws_url }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: company-chat-android-${{ github.sha }}
+          path: mobile/company_chat/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS (signing required)
+    if: ${{ vars.IOS_BUILD_ENABLED == 'true' }}
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: mobile/company_chat
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - name: Build iOS without codesign unless secrets are configured
+        run: >
+          flutter build ios --release --no-codesign
+          --dart-define=API_BASE_URL=${{ inputs.api_base_url }}
+          --dart-define=WS_URL=${{ inputs.ws_url }}

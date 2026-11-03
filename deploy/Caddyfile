@@ -1,0 +1,47 @@
+{
+	email {$CADDY_EMAIL}
+}
+
+{$CHAT_SITE::80} {
+	encode zstd gzip
+	request_body {
+		max_size 2GB
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	@api path /api/* /health/*
+	handle @api {
+		reverse_proxy api:3001 {
+			flush_interval -1
+			transport http {
+				read_timeout 3600s
+				write_timeout 3600s
+				dial_timeout 10s
+			}
+		}
+	}
+
+	# Used only when STORAGE_IN_CLUSTER=1 (LocalStack/MinIO via Docker DNS).
+	# External AWS S3 / R2 clients use provider URLs from S3_PUBLIC_ENDPOINT.
+	handle_path /s3/* {
+		reverse_proxy {$S3_PROXY_UPSTREAM:storage:4566} {
+			flush_interval -1
+			transport http {
+				read_timeout 3600s
+				write_timeout 3600s
+				dial_timeout 10s
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy web:8080
+	}
+}

@@ -61,6 +61,7 @@ import { getErrorMessage } from '@/services/api-error'
 import { toast } from 'sonner'
 import { AttachmentMedia, UploadProgress } from '@/features/messages/AttachmentViews'
 import { ATTACHMENT_ACCEPT, uploadAttachment } from '@/features/messages/attachment-upload'
+import { clearTransfer, loadTransfers, saveTransfers } from '@/features/messages/transfer-runtime'
 import { AttachMenu } from '@/features/messages/AttachMenu'
 import { startVoiceRecording } from '@/features/messages/voice-record'
 import { ChatInfoPanel } from '@/features/groups/ChatInfoPanel'
@@ -217,6 +218,20 @@ function Composer({ conversationId, apiRef, canSend = true }) {
   const voiceRef = useRef(null)
   const [recording, setRecording] = useState(false)
   const [recordSeconds, setRecordSeconds] = useState(0)
+  const resumePickerRef = useRef(null)
+
+  useEffect(() => {
+    setUploads(
+      loadTransfers(conversationId).map((row) => ({
+        ...row,
+        controller: new AbortController(),
+      })),
+    )
+  }, [conversationId])
+
+  useEffect(() => {
+    saveTransfers(conversationId, uploads)
+  }, [conversationId, uploads])
 
   function emitTyping(start) {
     websocketManager.send({
@@ -301,13 +316,30 @@ function Composer({ conversationId, apiRef, canSend = true }) {
     }
   }
 
-  async function startUpload(file, previousId) {
+  async function startUpload(file, previous) {
     if (!canSend) return
-    const id = previousId ?? crypto.randomUUID()
+    const resume = typeof previous === 'object' && previous ? previous : uploads.find((item) => item.id === previous)
+    if (!file) {
+      resumePickerRef.current = resume
+      fileRef.current?.click()
+      toast.error('Reselect the original file to resume this upload.')
+      return
+    }
+    const id = resume?.id ?? crypto.randomUUID()
+    const clientMessageId = resume?.clientMessageId ?? crypto.randomUUID()
     const controller = new AbortController()
     setUploads((current) => [
       ...current.filter((item) => item.id !== id),
-      { id, file, progress: 0, error: false, controller },
+      {
+        ...resume,
+        id,
+        file,
+        clientMessageId,
+        progress: resume?.progress ?? 0,
+        error: false,
+        needsFile: false,
+        controller,
+      },
     ])
     try {
       const saved = await uploadAttachment({
@@ -317,6 +349,12 @@ function Composer({ conversationId, apiRef, canSend = true }) {
         replyToMessageId: replyTo?.id,
         quality: mediaQuality,
         signal: controller.signal,
+        clientMessageId,
+        attachmentId: resume?.attachmentId,
+        completedParts: resume?.parts ?? [],
+        onState: (state) => {
+          setUploads((current) => current.map((item) => (item.id === id ? { ...item, ...state } : item)))
+        },
         onProgress: (progress) => {
           const next = typeof progress === 'number' ? { percent: progress } : progress
           setUploads((current) => current.map((item) => (item.id === id ? { ...item, ...next, progress: next.percent ?? 0 } : item)))
@@ -328,14 +366,28 @@ function Composer({ conversationId, apiRef, canSend = true }) {
       }))
       touchConversationFromMessage(conversationId, saved)
       setUploads((current) => current.filter((item) => item.id !== id))
+      clearTransfer(conversationId, id)
       setText('')
       setReplyTo(null)
     } catch (error) {
       if (error.cancelled) {
         setUploads((current) => current.filter((item) => item.id !== id))
+        clearTransfer(conversationId, id)
         return
       }
-      setUploads((current) => current.map((item) => (item.id === id ? { ...item, error: true } : item)))
+      setUploads((current) =>
+        current.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                error: true,
+                attachmentId: error.attachmentId ?? item.attachmentId,
+                clientMessageId: error.clientMessageId ?? item.clientMessageId,
+                parts: error.parts ?? item.parts,
+              }
+            : item,
+        ),
+      )
       toast.error(getErrorMessage(error))
     }
   }
@@ -401,7 +453,7 @@ function Composer({ conversationId, apiRef, canSend = true }) {
           key={item.id}
           item={item}
           onCancel={(row) => row.controller.abort()}
-          onRetry={(row) => startUpload(row.file, row.id)}
+          onRetry={(row) => startUpload(row.file, row)}
         />
       ))}
       {!canSend ? (
@@ -442,7 +494,9 @@ function Composer({ conversationId, apiRef, canSend = true }) {
           onChange={(event) => {
             const file = event.target.files?.[0]
             event.target.value = ''
-            if (file) startUpload(file)
+            const resume = resumePickerRef.current
+            resumePickerRef.current = null
+            if (file) startUpload(file, resume)
           }}
         />
         {recording ? (

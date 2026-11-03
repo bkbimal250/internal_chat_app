@@ -11,6 +11,7 @@ import 'package:company_chat/core/utils/time_format.dart';
 import 'package:company_chat/core/widgets/user_avatar.dart';
 import 'package:company_chat/features/auth/presentation/auth_controller.dart';
 import 'package:company_chat/features/conversations/presentation/conversations_controller.dart';
+import 'package:company_chat/features/media/media_download.dart';
 import 'package:company_chat/features/media/media_limits.dart';
 import 'package:company_chat/features/media/media_prepare.dart';
 import 'package:company_chat/features/messages/presentation/attach_sheet.dart';
@@ -762,7 +763,21 @@ class _AttachmentThumbState extends ConsumerState<_AttachmentThumb> {
       );
     }
     return InkWell(
-      onTap: _url == null ? null : () => launchUrl(Uri.parse(_url!), mode: LaunchMode.externalApplication),
+      onTap: () async {
+        final id = widget.attachment['id'] as String?;
+        if (id == null) return;
+        try {
+          final file = await downloadAttachmentFile(
+            api: ref.read(apiClientProvider),
+            attachmentId: id,
+            fileName: name,
+            sizeBytes: (widget.attachment['sizeBytes'] as num?)?.toInt(),
+          );
+          await launchUrl(Uri.file(file.path), mode: LaunchMode.externalApplication);
+        } catch (_) {
+          if (_url != null) await launchUrl(Uri.parse(_url!), mode: LaunchMode.externalApplication);
+        }
+      },
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [

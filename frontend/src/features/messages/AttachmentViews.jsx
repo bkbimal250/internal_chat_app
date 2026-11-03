@@ -80,10 +80,24 @@ export async function downloadAttachment(attachment) {
   if (!attachment?.id) throw new Error('Missing attachment')
   const result = await attachmentsApi.url(attachment.id, { download: true })
   const fileName = result.fileName || attachment.originalName || 'download'
+  const size = Number(attachment.sizeBytes || 0)
+  if (size > 32 * 1024 * 1024) {
+    const link = document.createElement('a')
+    link.href = result.url
+    link.download = fileName
+    link.rel = 'noopener'
+    link.target = '_blank'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    return
+  }
   try {
     const response = await fetch(result.url)
     if (!response.ok) throw new Error('Download failed')
-    const href = URL.createObjectURL(await response.blob())
+    const buffer = await response.arrayBuffer()
+    if (size && buffer.byteLength !== size) throw new Error('Download incomplete')
+    const href = URL.createObjectURL(new Blob([buffer], { type: result.mimeType || attachment.mimeType }))
     const link = document.createElement('a')
     link.href = href
     link.download = fileName
@@ -224,13 +238,15 @@ export function UploadProgress({ item, onCancel, onRetry }) {
   return (
     <div className="mb-2 rounded-md bg-muted px-3 py-2 text-xs" data-testid="upload-progress">
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate">{item.file.name}</span>
+        <span className="truncate">{item.file?.name || item.fileName}</span>
         <span>{item.error ? 'Failed' : `${item.progress ?? 0}%`}</span>
       </div>
       <p className="mt-1 text-[11px] text-muted-foreground">
         {item.error
-          ? 'Upload interrupted. Retry keeps the same file.'
-          : `${phase}${item.sent != null ? ` · ${formatSize(item.sent)} of ${formatSize(item.total || item.file.size)}` : ''}${eta ? ` · ${eta}` : ''}`}
+          ? item.needsFile
+            ? 'Reload dropped the file handle. Reselect the same file to resume.'
+            : 'Upload interrupted. Retry resumes uploaded chunks when possible.'
+          : `${phase}${item.sent != null ? ` · ${formatSize(item.sent)} of ${formatSize(item.total || item.file?.size || item.size)}` : ''}${eta ? ` · ${eta}` : ''}`}
       </p>
       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-background">
         <div className="h-full bg-primary transition-all" style={{ width: `${item.progress ?? 0}%` }} />

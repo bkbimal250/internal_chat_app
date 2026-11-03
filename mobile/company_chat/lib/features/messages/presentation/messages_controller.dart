@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:company_chat/app/providers.dart';
 import 'package:company_chat/core/network/api_client.dart';
@@ -122,14 +123,16 @@ class MessagesController extends StateNotifier<MessagesState> {
           ? receipts.cast<Map>().map(Map<String, dynamic>.from).toList()
           : ((receipts as Map?)?['data'] as List? ?? []).cast<Map>().map(Map<String, dynamic>.from).toList();
       await _ref.read(databaseProvider).replaceConversation(conversationId, messages);
+      final withDrafts = _live(await _ref.read(databaseProvider).loadMessages(conversationId));
       state = state.copyWith(
         details: details,
         retention: retention,
-        messages: _sort(messages),
+        messages: _sort(withDrafts),
         receipts: receiptRows,
         loading: false,
       );
       _markRead();
+      unawaited(_resumePending(withDrafts));
     } catch (_) {
       state = state.copyWith(loading: false);
     }
@@ -215,6 +218,25 @@ class MessagesController extends StateNotifier<MessagesState> {
       uploadCompressedSize: media.sizeBytes,
       clearEta: true,
     );
+    final clientMessageId = const Uuid().v4();
+    final draft = {
+      'id': clientMessageId,
+      'clientMessageId': clientMessageId,
+      'conversationId': conversationId,
+      'senderId': _ref.read(authControllerProvider).user?.id,
+      'content': caption ?? '',
+      'messageType': media.kind,
+      'createdAt': DateTime.now().toUtc().toIso8601String(),
+      'pending': true,
+      'transfer': {
+        'path': media.path,
+        'fileName': media.fileName,
+        'mimeType': media.mimeType,
+        'sizeBytes': media.sizeBytes,
+      },
+    };
+    _upsert(draft);
+    await _ref.read(databaseProvider).upsertMessage(draft);
     try {
       final saved = await MediaUploader(_api).upload(
         conversationId: conversationId,
@@ -223,8 +245,14 @@ class MessagesController extends StateNotifier<MessagesState> {
         mimeType: media.mimeType,
         caption: caption,
         replyToMessageId: state.replyTo?['id'] as String?,
-        clientMessageId: const Uuid().v4(),
+        clientMessageId: clientMessageId,
         cancelToken: cancel,
+        onState: (transfer) async {
+          await _ref.read(databaseProvider).upsertMessage({
+            ...draft,
+            'transfer': {...(draft['transfer'] as Map), ...transfer},
+          });
+        },
         onProgress: (progress) {
           state = state.copyWith(
             uploading: true,
@@ -249,6 +277,8 @@ class MessagesController extends StateNotifier<MessagesState> {
       state = state.copyWith(uploading: false, uploadProgress: 0, uploadLabel: '', clearEta: true);
       if (error is DioException && CancelToken.isCancel(error)) return;
       if (error is MediaLimitException && error.message.contains('cancelled')) return;
+      _upsert({...draft, 'pending': false, 'failed': true});
+      await _ref.read(databaseProvider).upsertMessage({...draft, 'pending': false, 'failed': true});
       rethrow;
     } finally {
       if (identical(_uploadCancel, cancel)) _uploadCancel = null;
@@ -257,6 +287,37 @@ class MessagesController extends StateNotifier<MessagesState> {
 
   void cancelUpload() {
     _uploadCancel?.cancel('cancelled');
+  }
+
+  Future<void> _resumePending(List<Map<String, dynamic>> messages) async {
+    for (final row in messages) {
+      final transfer = row['transfer'];
+      if (row['pending'] != true || transfer is! Map) continue;
+      final path = transfer['path'] as String?;
+      if (path == null || !File(path).existsSync()) continue;
+      final cancel = CancelToken();
+      _uploadCancel = cancel;
+      state = state.copyWith(uploading: true, uploadLabel: 'Resuming upload');
+      try {
+        final saved = await MediaUploader(_api).upload(
+          conversationId: conversationId,
+          path: path,
+          fileName: transfer['fileName'] as String? ?? 'file',
+          mimeType: transfer['mimeType'] as String? ?? 'application/octet-stream',
+          caption: row['content'] as String?,
+          clientMessageId: row['clientMessageId'] as String?,
+          attachmentId: transfer['attachmentId'] as String?,
+          completedParts: ((transfer['parts'] as List?) ?? []).whereType<Map>().map(Map<String, dynamic>.from).toList(),
+          cancelToken: cancel,
+        );
+        _upsert(saved);
+        await _ref.read(databaseProvider).upsertMessage(saved);
+      } catch (_) {
+        _upsert({...row, 'pending': false, 'failed': true});
+      } finally {
+        state = state.copyWith(uploading: false, uploadProgress: 0, uploadLabel: '', clearEta: true);
+      }
+    }
   }
 
   void setReply(Map<String, dynamic>? message) => state = state.copyWith(replyTo: message, clearReply: message == null);

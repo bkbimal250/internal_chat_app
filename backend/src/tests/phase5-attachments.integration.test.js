@@ -226,6 +226,15 @@ test(
     });
     assert.equal(multiFinal.statusCode, 201, multiFinal.body);
     assert.equal(multiFinal.json().attachment.status, 'available');
+    const multiFinalRetry = await app.inject({
+      method: 'POST',
+      url: `/api/v1/attachments/${multiInit.json().id}/finalize`,
+      headers: header(sessionA),
+      payload: { clientMessageId: randomUUID() },
+    });
+    assert.equal(multiFinalRetry.statusCode, 200, multiFinalRetry.body);
+    assert.equal(multiFinalRetry.json().duplicate, true);
+    assert.equal(multiFinalRetry.json().id, multiFinal.json().id);
 
     const denied = await app.inject({
       method: 'GET',

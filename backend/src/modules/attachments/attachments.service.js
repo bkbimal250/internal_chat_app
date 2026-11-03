@@ -20,6 +20,7 @@ export function publicAttachment(row) {
     sizeBytes: row.sizeBytes,
     kind: row.kind,
     status: row.status,
+    checksumSha256: row.checksumSha256 || null,
   };
 }
 
@@ -221,17 +222,42 @@ export function attachmentsService(app, config) {
       };
     },
     async finalize(id, userId, input) {
-      const [existing] = await db.select().from(attachments).where(eq(attachments.id, id));
-      if (!existing || existing.uploaderId !== userId) throw new AppError('Attachment not found', 404, 'NOT_FOUND');
-      await conversationsService.assertMember(existing.conversationId, userId);
-      if (existing.status === 'available' && existing.messageId) {
-        const [message] = await db.select().from(messages).where(eq(messages.id, existing.messageId));
-        return this.hydrate(message);
+      const [current] = await db.select().from(attachments).where(eq(attachments.id, id));
+      if (!current || current.uploaderId !== userId) throw new AppError('Attachment not found', 404, 'NOT_FOUND');
+      await conversationsService.assertMember(current.conversationId, userId);
+      if (current.status === 'available' && current.messageId) {
+        const [message] = await db.select().from(messages).where(eq(messages.id, current.messageId));
+        const hydrated = await this.hydrate(message);
+        return { ...hydrated, duplicate: true };
       }
-      if (existing.status !== 'pending') throw new AppError('Upload is not pending', 409, 'CONFLICT');
-      if (existing.uploadExpiresAt && existing.uploadExpiresAt.getTime() < Date.now()) {
+      if (current.status === 'quarantined' && !current.messageId) {
+        throw new AppError('Upload is already being finalized', 409, 'CONFLICT');
+      }
+      if (current.status !== 'pending') throw new AppError('Upload is not pending', 409, 'CONFLICT');
+      if (current.uploadExpiresAt && current.uploadExpiresAt.getTime() < Date.now()) {
         throw new AppError('Upload expired', 410, 'UPLOAD_EXPIRED');
       }
+      const [existing] = await db
+        .update(attachments)
+        .set({ status: 'quarantined' })
+        .where(and(eq(attachments.id, id), eq(attachments.status, 'pending')))
+        .returning();
+      if (!existing) {
+        const [again] = await db.select().from(attachments).where(eq(attachments.id, id));
+        if (again?.status === 'available' && again.messageId) {
+          const [message] = await db.select().from(messages).where(eq(messages.id, again.messageId));
+          const hydrated = await this.hydrate(message);
+          return { ...hydrated, duplicate: true };
+        }
+        throw new AppError('Upload is already being finalized', 409, 'CONFLICT');
+      }
+      const releasePending = async () => {
+        await db
+          .update(attachments)
+          .set({ status: 'pending' })
+          .where(and(eq(attachments.id, id), eq(attachments.status, 'quarantined'), isNull(attachments.messageId)));
+      };
+      try {
       if (existing.multipartUploadId) {
         const head = await storage.head(existing.storageKey);
         if (!head) {
@@ -243,7 +269,7 @@ export function attachmentsService(app, config) {
             throw new AppError('Uploaded object was not found', 409, 'UPLOAD_INCOMPLETE');
           }
           if (!clientParts && uploadedBytes !== existing.sizeBytes) {
-            throw new AppError('Uploaded size does not match', 400, 'INVALID_UPLOAD');
+            throw new AppError('Uploaded size does not match', 409, 'UPLOAD_INCOMPLETE');
           }
           await storage.completeMultipart(existing.storageKey, existing.multipartUploadId, listed);
         }
@@ -251,11 +277,18 @@ export function attachmentsService(app, config) {
       const head = await storage.head(existing.storageKey);
       if (!head) throw new AppError('Uploaded object was not found', 409, 'UPLOAD_INCOMPLETE');
       const size = Number(head.ContentLength ?? 0);
-      if (size !== existing.sizeBytes) throw new AppError('Uploaded size does not match', 400, 'INVALID_UPLOAD');
-      await db
-        .update(attachments)
-        .set({ status: 'quarantined', multipartUploadId: null })
-        .where(eq(attachments.id, id));
+      if (size !== existing.sizeBytes) {
+        await db
+          .update(attachments)
+          .set({
+            status: 'rejected',
+            rejectionReason: 'SIZE_MISMATCH',
+            deletedAt: new Date(),
+          })
+          .where(eq(attachments.id, id));
+        await storage.remove(existing.storageKey).catch(() => {});
+        throw new AppError('Uploaded size does not match', 400, 'INVALID_UPLOAD');
+      }
       let checksum;
       try {
         await inspectUploadedObject(storage, existing.storageKey, existing.mimeType, existing.sizeBytes);
@@ -271,6 +304,18 @@ export function attachmentsService(app, config) {
           .where(eq(attachments.id, id));
         await storage.remove(existing.storageKey).catch(() => {});
         throw error instanceof AppError ? error : new AppError('File failed security checks', 415, 'UNSUPPORTED_MEDIA_TYPE');
+      }
+      if (input.checksumSha256 && String(input.checksumSha256).toLowerCase() !== checksum) {
+        await db
+          .update(attachments)
+          .set({
+            status: 'rejected',
+            rejectionReason: 'CHECKSUM_MISMATCH',
+            deletedAt: new Date(),
+          })
+          .where(eq(attachments.id, id));
+        await storage.remove(existing.storageKey).catch(() => {});
+        throw new AppError('Uploaded checksum does not match', 400, 'INVALID_UPLOAD');
       }
       return db.transaction(async (tx) => {
         const created = await insertMessage(tx, {
@@ -314,6 +359,12 @@ export function attachmentsService(app, config) {
           .returning();
         return { ...created.message, attachment: publicAttachment(updated), duplicate: false };
       });
+      } catch (error) {
+        if (!(error instanceof AppError) || !['UNSUPPORTED_MEDIA_TYPE', 'INVALID_UPLOAD'].includes(error.code)) {
+          await releasePending();
+        }
+        throw error;
+      }
     },
     async downloadUrl(id, userId, { download = false } = {}) {
       const [row] = await db.select().from(attachments).where(eq(attachments.id, id));
@@ -352,10 +403,13 @@ export function attachmentsService(app, config) {
       const [row] = await db.select().from(attachments).where(eq(attachments.id, id));
       if (!row || row.uploaderId !== userId) throw new AppError('Attachment not found', 404, 'NOT_FOUND');
       if (row.status === 'available') throw new AppError('Available files cannot be cancelled', 409, 'CONFLICT');
-      await db
+      if (row.status === 'deleted') return { success: true };
+      const [cancelled] = await db
         .update(attachments)
         .set({ status: 'deleted', deletedAt: new Date(), multipartUploadId: null })
-        .where(eq(attachments.id, id));
+        .where(and(eq(attachments.id, id), eq(attachments.status, 'pending')))
+        .returning();
+      if (!cancelled) throw new AppError('Upload is being finalized', 409, 'CONFLICT');
       await storage.abortMultipart(row.storageKey, row.multipartUploadId);
       await storage.remove(row.storageKey).catch(() => {});
       return { success: true };

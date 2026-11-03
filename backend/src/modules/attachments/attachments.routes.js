@@ -75,6 +75,7 @@ export default async function attachmentRoutes(app, config) {
           {
             clientMessageId: id,
             caption: { type: 'string', maxLength: 4000 },
+            checksumSha256: { type: 'string', minLength: 64, maxLength: 64, pattern: '^[a-fA-F0-9]{64}$' },
             replyToMessageId: id,
             parts: {
               type: 'array',

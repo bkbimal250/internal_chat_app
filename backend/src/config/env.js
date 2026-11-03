@@ -55,13 +55,16 @@ export function loadEnv(source = process.env) {
     refreshTokenDays: integer('REFRESH_TOKEN_DAYS', 30, 1, 90),
     authRateLimit: integer('AUTH_RATE_LIMIT', 10, 1, 1000),
     otpRateLimit: integer('OTP_RATE_LIMIT', 8, 1, 1000),
-    otpTtlSeconds: integer('OTP_TTL_SECONDS', 300, 30, 900),
+    otpTtlSeconds: integer('OTP_TTL_SECONDS', 60, 30, 900),
     otpResendSeconds: integer('OTP_RESEND_SECONDS', 60, 10, 300),
     otpMaxAttempts: integer('OTP_MAX_ATTEMPTS', 5, 1, 10),
     otpMaxPerHour: integer('OTP_MAX_PER_HOUR', 5, 1, 50),
-    twilioAccountSid: source.TWILIO_ACCOUNT_SID ?? '',
-    twilioAuthToken: source.TWILIO_AUTH_TOKEN ?? '',
-    twilioFromNumber: source.TWILIO_FROM_NUMBER ?? '',
+    smsApiUrl: source.SMS_API_URL ?? 'https://www.hilitemultimedia.co.in/websms/api/http/index.php',
+    smsUsername: source.SMS_USERNAME ?? '',
+    smsApiKey: source.SMS_API_KEY ?? '',
+    smsTemplateId: source.SMS_TEMPLATE_ID ?? '',
+    smsSender: source.SMS_SENDER ?? 'SPAADV',
+    smsRoute: source.SMS_ROUTE ?? 'ServiceImplicit',
     groupMemberLimit: integer('GROUP_MEMBER_LIMIT', 1000, 2, 10000),
     wsHeartbeatIntervalMs: integer(
       'WS_HEARTBEAT_INTERVAL_MS',
@@ -83,6 +86,12 @@ export function loadEnv(source = process.env) {
     s3AccessKey: source.S3_ACCESS_KEY ?? '',
     s3SecretKey: source.S3_SECRET_KEY ?? '',
     s3ForcePathStyle: source.S3_FORCE_PATH_STYLE !== 'false',
+    s3CreateBucket:
+      source.S3_CREATE_BUCKET === '1' || source.S3_CREATE_BUCKET === 'true'
+        ? true
+        : source.S3_CREATE_BUCKET === '0' || source.S3_CREATE_BUCKET === 'false'
+          ? false
+          : nodeEnv !== 'production',
     s3UploadTtlSeconds: integer('S3_UPLOAD_TTL_SECONDS', 900, 30, 3600),
     s3DownloadTtlSeconds: integer('S3_DOWNLOAD_TTL_SECONDS', 60, 15, 600),
     attachmentPendingTtlMs: integer('ATTACHMENT_PENDING_TTL_MS', 7200000, 60000, 86400000),
@@ -94,6 +103,7 @@ export function loadEnv(source = process.env) {
     ),
     attachmentRateLimit: integer('ATTACHMENT_RATE_LIMIT', 60, 1, 1000),
     firebaseServiceAccountPath: source.FIREBASE_SERVICE_ACCOUNT_PATH ?? '',
+    trustProxy: source.TRUST_PROXY === '1' || source.TRUST_PROXY === 'true',
     host: source.HOST ?? '0.0.0.0',
     port: integer('PORT', 3001, 1, 65535),
     dbPoolMax: integer('DB_POOL_MAX', 10, 1, 100),
@@ -108,12 +118,18 @@ export function loadEnv(source = process.env) {
   if (nodeEnv === 'production' && corsOrigins.some((origin) => !origin.startsWith('https://'))) {
     errors.push('Production CORS_ORIGINS must use HTTPS');
   }
-  if (config.twilioFromNumber && !/^\+[1-9]\d{7,14}$/.test(config.twilioFromNumber)) {
-    errors.push('TWILIO_FROM_NUMBER must be an E.164 phone number');
+  try {
+    const url = new URL(config.smsApiUrl);
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+  } catch {
+    errors.push('SMS_API_URL must be an HTTP(S) URL');
+  }
+  if (!config.smsSender.trim() || !config.smsRoute.trim()) {
+    errors.push('SMS sender and route must not be empty');
   }
   if (nodeEnv === 'production') {
-    if (!config.twilioAccountSid.trim() || !config.twilioAuthToken.trim() || !config.twilioFromNumber.trim()) {
-      errors.push('Production Twilio credentials are required');
+    if (!config.smsUsername.trim() || !config.smsApiKey.trim() || !config.smsTemplateId.trim()) {
+      errors.push('Production SMS username, API key and template ID are required');
     }
     if (!config.s3Endpoint.trim() || !config.s3AccessKey.trim() || !config.s3SecretKey.trim()) {
       errors.push('Production S3 endpoint and credentials are required');

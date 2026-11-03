@@ -1,0 +1,125 @@
+Company Chat — media transfer reliability report
+Date: 2026-11-03
+Scope: Fastify attachments, React uploads/downloads, Flutter uploads/downloads
+Destructive 2 GB live transfer: NOT EXECUTED (no isolated 2 GB fixture run against production volumes)
+
+============================================================
+1) Root causes found
+============================================================
+
+- Finalize was not claimed atomically. Two overlapping finalize calls could both
+  pass the pending check. A successful retry also re-broadcast message.created.
+- Web and Flutter deleted the S3 multipart session on any failure, so Retry
+  started from byte zero even though GET /attachments/:id/parts already existed.
+- clientMessageId for web media was created at finalize time, so a retried
+  finalize could insert a second message.
+- Web downloads used response.blob(), which loads the whole object into RAM.
+- Flutter had no durable pending media draft; navigating away or restarting
+  dropped in-flight uploads. Drift replaceConversation also wiped local pending
+  text/media drafts.
+- Part uploads were strictly serial, with linear retry and no jitter.
+- publicAttachment omitted checksumSha256, so clients could not compare the
+  stored SHA-256 after download.
+
+============================================================
+2) Files modified
+============================================================
+
+Backend
+  backend/src/modules/attachments/attachments.service.js
+  backend/src/modules/attachments/attachments.routes.js
+  backend/src/services/upload-plan.js
+  backend/src/tests/upload-plan.test.js
+  backend/src/tests/phase5-attachments.integration.test.js
+
+Web
+  frontend/src/features/messages/attachment-upload.js
+  frontend/src/features/messages/transfer-runtime.js
+  frontend/src/features/messages/transfer-runtime.test.js
+  frontend/src/features/messages/MessagePane.jsx
+  frontend/src/features/messages/AttachmentViews.jsx
+
+Flutter
+  mobile/company_chat/lib/features/media/media_upload.dart
+  mobile/company_chat/lib/features/media/transfer_runtime.dart
+  mobile/company_chat/lib/features/media/media_download.dart
+  mobile/company_chat/lib/features/messages/presentation/messages_controller.dart
+  mobile/company_chat/lib/features/messages/presentation/chat_screen.dart
+  mobile/company_chat/lib/core/storage/app_database.dart
+  mobile/company_chat/test/transfer_runtime_test.dart
+
+============================================================
+3) Upload / download architecture
+============================================================
+
+Upload
+  init (quota + pending row + optional multipart id)
+  PUT 8 MiB parts to presigned URLs, concurrency 3
+  GET /parts to skip completed ETags
+  finalize claims pending -> quarantined, completes multipart if needed,
+  streams SHA-256 of the object, then inserts the message.
+
+Download
+  Web files > 32 MB: browser download of the signed URL (no Blob in RAM).
+  Smaller web files: fetch, size-check, then save.
+  Flutter documents: stream to *.part, rename when size matches.
+
+Integrity
+  Server streams SHA-256 of the completed object. Multipart ETags are NOT
+  treated as a full-file MD5. Optional client checksumSha256 is compared when
+  sent. Size and magic-byte inspection still run before the message is visible.
+
+============================================================
+4) Chunk retry and resume
+============================================================
+
+- Failed parts retry up to 4 times with exponential backoff and jitter.
+- Cancel is the only path that aborts/deletes the multipart upload.
+- Retry reuses attachmentId, clientMessageId and completed ETags.
+- Flutter persists pending drafts in Drift and resumes if the original file
+  path still exists after restart.
+- Web keeps File objects in memory across chat navigation. After a full page
+  reload the File handle is gone; the UI asks the user to reselect the same
+  file. File bytes are never written to localStorage or IndexedDB.
+
+============================================================
+5) Message delivery guarantees
+============================================================
+
+- PostgreSQL remains authoritative. WebSocket is best-effort fan-out.
+- Messages are shown as sent only after finalize/create succeeds.
+- Duplicate finalize of an available attachment returns 200 duplicate=true
+  and does not broadcast again.
+- afterSeq / afterChangeSeq sync is unchanged.
+- Unsent media stays in the composer/Drift draft until confirmed or cancelled.
+
+============================================================
+6) Tests executed
+============================================================
+
+Intended:
+  backend upload-plan unit tests
+  frontend transfer-runtime unit tests
+  Flutter transfer_runtime tests
+
+Phase 5 attachment integration (multipart, cancel, mismatch, duplicate finalize)
+  runs only with TEST_DATABASE_URL ending in _test. Not claimed here unless that
+  command is executed in the environment.
+
+Not executed:
+  100 MB / 500 MB / 1 GB / 2 GB live uploads
+  Wi-Fi flap, background/foreground, thermal/CPU traces
+  Full object SHA-256 of a 2 GB file
+
+============================================================
+7) Remaining risks
+============================================================
+
+- True background upload after process death is not claimed. Android/iOS will
+  resume only if the original file path is still readable.
+- Browser reload cannot keep a File object; user reselection is required.
+- hashObject streams the whole object on finalize. That is memory-safe but adds
+  latency on very large files.
+- Presigned part URLs expire; a paused upload longer than S3_UPLOAD_TTL_SECONDS
+  must sign those parts again (the retry path does this).
+- 2 GB end-to-end throughput numbers are unverified.

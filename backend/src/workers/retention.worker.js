@@ -50,7 +50,9 @@ export async function runRetentionWorker({ config = loadEnv(), once = false } = 
   const interval = config.retentionWorkerIntervalMs;
   const health = http.createServer((_request, response) => {
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ status: 'ok', service: 'retention-worker', mode: 'preview-until-approved' }));
+    const payload = { status: 'ok', service: 'retention-worker', mode: 'preview-until-approved' };
+    if (process.env.GIT_SHA) payload.version = process.env.GIT_SHA;
+    response.end(JSON.stringify(payload));
   });
   await new Promise((resolve) => health.listen(3002, '127.0.0.1', resolve));
   log.info({ interval }, 'Retention worker started (preview until admin approval)');

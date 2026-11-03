@@ -13,7 +13,9 @@ USER node
 CMD ["npm", "run", "dev"]
 
 FROM base AS runtime
+ARG GIT_SHA=unknown
 ENV NODE_ENV=production
+ENV GIT_SHA=$GIT_SHA
 COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json package-lock.json ./
 COPY --chown=node:node src ./src

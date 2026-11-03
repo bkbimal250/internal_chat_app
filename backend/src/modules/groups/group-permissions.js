@@ -33,16 +33,14 @@ export function canAddGroupMembers(role, settings) {
 
 export function presentGroup(conversation) {
   if (!conversation) return conversation;
-  const {
-    avatarReference,
-    editInfoPolicy,
-    sendMessagesPolicy,
-    addMembersPolicy,
-    ...rest
-  } = conversation;
+  const rest = { ...conversation };
+  delete rest.avatarReference;
+  delete rest.editInfoPolicy;
+  delete rest.sendMessagesPolicy;
+  delete rest.addMembersPolicy;
   return {
     ...rest,
-    hasAvatar: Boolean(avatarReference),
+    hasAvatar: Boolean(conversation.avatarReference),
     avatarVersion: conversation.updatedAt instanceof Date ? conversation.updatedAt.toISOString() : conversation.updatedAt,
     settings: groupSettings(conversation),
   };

@@ -122,6 +122,22 @@ for (const nodeEnv of ['development', 'production']) {
   });
 }
 
+test('production does not auto-create S3 buckets unless S3_CREATE_BUCKET is set', () => {
+  const required = {
+    NODE_ENV: 'production',
+    JWT_SECRET: 'foundation-test-only-secret-'.repeat(4),
+    DATABASE_URL: 'postgresql://chat:secret@postgres:5432/company_chat',
+    SMS_USERNAME: 'user',
+    SMS_API_KEY: 'key',
+    SMS_TEMPLATE_ID: 'tmpl',
+    S3_ENDPOINT: 'https://s3.example.com',
+    S3_ACCESS_KEY: 'access',
+    S3_SECRET_KEY: 'secret-key',
+  };
+  assert.equal(loadEnv(required).s3CreateBucket, false);
+  assert.equal(loadEnv({ ...required, S3_CREATE_BUCKET: '1' }).s3CreateBucket, true);
+});
+
 test(
   'real PostgreSQL readiness and pool shutdown',
   {

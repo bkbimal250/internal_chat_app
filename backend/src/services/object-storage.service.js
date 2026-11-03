@@ -60,26 +60,39 @@ export function objectStorage(config, logger) {
       if (!enabled) return;
       try {
         await internal.send(new HeadBucketCommand({ Bucket: bucket }));
-      } catch {
+      } catch (error) {
+        if (!config.s3CreateBucket) {
+          logger?.warn(
+            { err: error, code: 'STORAGE_BUCKET_MISSING' },
+            'S3 bucket is missing and S3_CREATE_BUCKET is disabled',
+          );
+          return;
+        }
         await internal.send(new CreateBucketCommand({ Bucket: bucket }));
       }
-      const origins = config.corsOrigins.length ? config.corsOrigins : ['http://127.0.0.1:5173'];
-      await internal.send(
-        new PutBucketCorsCommand({
-          Bucket: bucket,
-          CORSConfiguration: {
-            CORSRules: [
-              {
-                AllowedOrigins: origins,
-                AllowedMethods: ['GET', 'PUT', 'HEAD'],
-                AllowedHeaders: ['*'],
-                ExposeHeaders: ['ETag', 'Content-Length', 'Content-Type'],
-                MaxAgeSeconds: 3600,
-              },
-            ],
-          },
-        }),
-      );
+      const origins = config.corsOrigins.length
+        ? config.corsOrigins
+        : config.nodeEnv === 'production'
+          ? []
+          : ['http://127.0.0.1:5173'];
+      if (origins.length) {
+        await internal.send(
+          new PutBucketCorsCommand({
+            Bucket: bucket,
+            CORSConfiguration: {
+              CORSRules: [
+                {
+                  AllowedOrigins: origins,
+                  AllowedMethods: ['GET', 'PUT', 'HEAD'],
+                  AllowedHeaders: ['*'],
+                  ExposeHeaders: ['ETag', 'Content-Length', 'Content-Type'],
+                  MaxAgeSeconds: 3600,
+                },
+              ],
+            },
+          }),
+        );
+      }
       await internal
         .send(
           new PutBucketLifecycleConfigurationCommand({
@@ -273,7 +286,7 @@ export function objectStorage(config, logger) {
             UploadId: uploadId,
           }),
         );
-      } catch (error) {
+      } catch {
         logger?.warn({ code: 'STORAGE_ABORT_FAILED' }, 'Unable to abort multipart upload');
       }
     },

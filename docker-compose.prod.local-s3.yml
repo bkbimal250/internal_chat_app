@@ -1,0 +1,51 @@
+name: internal-chat
+
+# Optional in-cluster S3 (LocalStack) for a self-hosted VPS that already has
+# the internal-chat_storage_data volume. Do not use this overlay with AWS S3,
+# Cloudflare R2, or an external MinIO endpoint.
+#
+# Enabled when STORAGE_IN_CLUSTER=1 (see deploy/lib.sh).
+
+services:
+  storage:
+    image: localstack/localstack:4.4
+    env_file:
+      - ${PROD_ENV_FILE:-deploy/.env.production}
+    environment:
+      SERVICES: s3
+      AWS_DEFAULT_REGION: ${S3_REGION:-us-east-1}
+      PERSISTENCE: "1"
+    volumes:
+      - storage_data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 512m
+    cpus: 0.75
+    networks: [internal, ingress]
+
+  api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+
+  retention-worker:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+
+volumes:
+  storage_data:

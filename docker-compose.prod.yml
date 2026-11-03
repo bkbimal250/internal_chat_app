@@ -1,0 +1,161 @@
+name: internal-chat
+
+# Production stack: pull prebuilt images only. Never build on the VPS.
+# Reuses the same Compose project name and PostgreSQL volume as local docker-compose.yml.
+# In-cluster LocalStack is optional: add docker-compose.prod.local-s3.yml when
+# STORAGE_IN_CLUSTER=1. External AWS S3 / Cloudflare R2 / MinIO is the default.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app-security: &app-security
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CHAT_SITE: ${CHAT_SITE:-:80}
+      CADDY_EMAIL: ${CADDY_EMAIL:-}
+      S3_PROXY_UPSTREAM: ${S3_PROXY_UPSTREAM:-storage:4566}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 128m
+    cpus: 0.25
+    networks: [ingress]
+
+  web:
+    image: ${WEB_IMAGE:?WEB_IMAGE is required}
+    <<: *app-security
+    depends_on:
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 128m
+    cpus: 0.25
+    networks: [ingress, internal]
+
+  api:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    <<: *app-security
+    env_file:
+      - ${PROD_ENV_FILE:-deploy/.env.production}
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3001
+      NODE_ENV: production
+      TRUST_PROXY: "1"
+      GIT_SHA: ${IMAGE_TAG:-unknown}
+      FIREBASE_SERVICE_ACCOUNT_PATH: /app/secrets/firebase-service-account.json
+    volumes:
+      - ${FIREBASE_SECRET_PATH:-./deploy/secrets/firebase-unconfigured.json}:/app/secrets/firebase-service-account.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 75s
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 512m
+    cpus: 1.0
+    networks: [internal, ingress]
+
+  retention-worker:
+    image: ${API_IMAGE:?API_IMAGE is required}
+    <<: *app-security
+    command: ["node", "src/workers/retention.worker.js"]
+    env_file:
+      - ${PROD_ENV_FILE:-deploy/.env.production}
+    environment:
+      NODE_ENV: production
+      GIT_SHA: ${IMAGE_TAG:-unknown}
+      RETENTION_WORKER_INTERVAL_MS: ${RETENTION_WORKER_INTERVAL_MS:-300000}
+      FIREBASE_SERVICE_ACCOUNT_PATH: /app/secrets/firebase-service-account.json
+    volumes:
+      - ${FIREBASE_SECRET_PATH:-./deploy/secrets/firebase-unconfigured.json}:/app/secrets/firebase-service-account.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/health/live',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 4s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 256m
+    cpus: 0.5
+    networks: [internal]
+
+  migrate:
+    profiles: [migrate]
+    image: ${API_IMAGE:?API_IMAGE is required}
+    <<: *app-security
+    command: ["node", "src/database/migrate.js"]
+    env_file:
+      - ${PROD_ENV_FILE:-deploy/.env.production}
+    environment:
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    logging: *default-logging
+    mem_limit: 256m
+    cpus: 0.5
+    networks: [internal]
+
+  postgres:
+    image: postgres:17-bookworm
+    env_file:
+      - ${PROD_ENV_FILE:-deploy/.env.production}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 512m
+    cpus: 1.0
+    networks: [internal]
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  ingress:
+  internal:
+    internal: true

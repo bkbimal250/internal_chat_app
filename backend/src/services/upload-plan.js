@@ -4,6 +4,7 @@ export const MULTIPART_PART_SIZE = 8 * 1024 * 1024;
 export const INSPECT_PREFIX_BYTES = 512 * 1024;
 export const INSPECT_TAIL_BYTES = 256 * 1024;
 export const PART_URL_BATCH = 40;
+export const MULTIPART_CONCURRENCY = 3;
 
 export function planUpload(sizeBytes, strategy) {
   const size = Number(sizeBytes);

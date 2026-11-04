@@ -15,7 +15,7 @@ function SessionBootstrap({ children }) {
     restoreSession()
   }, [restoreSession])
 
-  if (status === 'idle' || status === 'loading') {
+  if (status === 'initializing') {
     return <SessionLoading />
   }
 

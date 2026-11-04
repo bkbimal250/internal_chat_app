@@ -32,10 +32,22 @@ export function checkOrigin(request, config) {
     throw new AppError('Origin not allowed', 403, 'ORIGIN_FORBIDDEN');
   }
 }
+export function csrfFromRequest(request) {
+  const header = request.headers['x-csrf-token'];
+  if (typeof header === 'string' && header) return header;
+  const cookie = request.cookies?.[CSRF_COOKIE];
+  if (typeof cookie === 'string' && cookie) return cookie;
+  return '';
+}
+
 export function checkCsrf(request, config) {
   checkOrigin(request, config);
   const token = request.cookies[REFRESH_COOKIE];
-  if (!token || !equalToken(request.headers['x-csrf-token'], csrfToken(token, config.jwtSecret))) {
+  if (!token) throw new AppError('CSRF validation failed', 403, 'CSRF_FAILED');
+  const expected = csrfToken(token, config.jwtSecret);
+  const header = request.headers['x-csrf-token'];
+  const cookie = request.cookies?.[CSRF_COOKIE];
+  if (!equalToken(header, expected) && !equalToken(cookie, expected)) {
     throw new AppError('CSRF validation failed', 403, 'CSRF_FAILED');
   }
 }

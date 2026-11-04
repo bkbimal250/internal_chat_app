@@ -4,7 +4,7 @@ import { websocketManager } from '@/services/websocket'
 import { applyRealtimeEvent } from '@/lib/realtime-events'
 import { queryKeys } from '@/lib/query-keys'
 import { messagesApi, receiptsApi } from '@/services/api'
-import { isAuthFailure, refreshAccessToken } from '@/services/api-client'
+import { isSessionInvalid, refreshAccessToken } from '@/services/api-client'
 import { applySyncRecords, newestChangeSeq, newestSequence, upsertMessage } from '@/lib/messages'
 import { useAuth } from '@/hooks/use-auth'
 import { usePresenceStore, useTypingStore, useUiStore } from '@/stores/ui-store'
@@ -27,7 +27,7 @@ export function RealtimeProvider({ children }) {
         useAuthStore.getState().hydrate(payload)
         websocketManager.reconnect()
       } catch (error) {
-        if (isAuthFailure(error)) useAuthStore.getState().reset()
+        if (isSessionInvalid(error)) useAuthStore.getState().reset()
       }
     })
     const unsubscribe = websocketManager.subscribe(async (event) => {

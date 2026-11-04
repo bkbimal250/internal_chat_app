@@ -22,7 +22,7 @@ export function useAuth() {
     isAuthenticated: status === 'authenticated',
     isAdmin: user?.role === 'admin',
     mustChangePassword: Boolean(user?.mustChangePassword),
-    isLoading: status === 'idle' || status === 'loading',
+    isLoading: status === 'initializing',
     isUnavailable: status === 'unavailable',
   }
 }

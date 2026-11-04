@@ -123,13 +123,28 @@ test(
     assert.equal(restored.statusCode, 200);
     assert.equal(restored.json().username, 'persist.user');
 
-    const missingCsrf = await app.inject({
+    const cookieOnly = await app.inject({
       method: 'POST',
       url: '/api/v1/auth/refresh',
       headers: {
         origin,
         'x-requested-with': 'company-chat',
         cookie: cookieHeader(parseCookies(rotated.headers)),
+      },
+      payload: { clientType: 'web' },
+    });
+    assert.equal(cookieOnly.statusCode, 200);
+    assert.ok(cookieOnly.json().accessToken);
+    assert.equal(cookieOnly.json().user.username, 'persist.user');
+
+    const rotatedRefresh = parseCookies(rotated.headers).find((cookie) => cookie.name === 'chat_refresh');
+    const missingCsrf = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/refresh',
+      headers: {
+        origin,
+        'x-requested-with': 'company-chat',
+        cookie: `${rotatedRefresh.name}=${rotatedRefresh.value}`,
       },
       payload: { clientType: 'web' },
     });

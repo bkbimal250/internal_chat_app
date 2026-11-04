@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { apiClient, isAuthFailure, refreshAccessToken } from '@/services/api-client'
+import { apiClient, isSessionInvalid, refreshAccessToken } from '@/services/api-client'
 import { applyTokens, clearTokens, getCsrfToken, subscribeSession } from '@/services/session-tokens'
 import { getDeviceName } from '@/lib/utils'
 import { useUiStore } from '@/stores/ui-store'
@@ -14,9 +14,10 @@ const emptySession = {
 }
 
 let restorePromise = null
+let restoreGeneration = 0
 
 export const useAuthStore = create((set, get) => ({
-  status: 'idle',
+  status: 'initializing',
   ...emptySession,
 
   hydrate(payload) {
@@ -36,8 +37,10 @@ export const useAuthStore = create((set, get) => ({
   },
 
   reset() {
+    restoreGeneration += 1
+    restorePromise = null
     clearTokens()
-    set({ status: 'anonymous', ...emptySession })
+    set({ status: 'unauthenticated', ...emptySession })
     useUiStore.getState().resetWorkspace()
   },
 
@@ -45,30 +48,31 @@ export const useAuthStore = create((set, get) => ({
     if (get().status === 'authenticated') return
     if (restorePromise) return restorePromise
 
+    const generation = ++restoreGeneration
     restorePromise = (async () => {
-      set({ status: 'loading' })
-      if (!getCsrfToken()) {
-        get().reset()
-        return
-      }
+      set({ status: 'initializing' })
       try {
         const payload = await refreshAccessToken()
+        if (generation !== restoreGeneration) return
         get().hydrate(payload)
         try {
           const { data } = await apiClient.get('/api/v1/auth/me')
+          if (generation !== restoreGeneration) return
           if (data) set({ user: data })
         } catch (error) {
-          if (isAuthFailure(error)) get().reset()
+          if (generation !== restoreGeneration) return
+          if (isSessionInvalid(error)) get().reset()
         }
       } catch (error) {
-        if (isAuthFailure(error) || !getCsrfToken()) {
+        if (generation !== restoreGeneration) return
+        if (isSessionInvalid(error)) {
           get().reset()
           return
         }
         set({ status: 'unavailable' })
       }
     })().finally(() => {
-      restorePromise = null
+      if (generation === restoreGeneration) restorePromise = null
     })
 
     return restorePromise
@@ -121,10 +125,10 @@ export const useAuthStore = create((set, get) => ({
 
 subscribeSession((event, detail) => {
   const state = useAuthStore.getState()
-  if (event === 'cleared' && state.status === 'authenticated') {
-    useAuthStore.setState({ status: 'anonymous', ...emptySession })
+  if (event === 'cleared' && state.status !== 'unauthenticated') {
+    useAuthStore.setState({ status: 'unauthenticated', ...emptySession })
   }
-  if (event === 'refreshed' && state.status === 'authenticated' && detail) {
+  if (event === 'refreshed' && detail?.accessToken && state.status !== 'unauthenticated') {
     state.hydrate(detail)
   }
 })

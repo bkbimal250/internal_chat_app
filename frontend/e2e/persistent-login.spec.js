@@ -88,6 +88,18 @@ test.describe('Persistent login', () => {
     await second.close()
   })
 
+  test('stays on the app when the API is unreachable instead of logging out', async ({ page }) => {
+    const accounts = loadAccounts()
+    await login(page, accounts.alpha)
+    await page.route(`${apiOrigin}/api/v1/**`, (route) => route.abort('failed'))
+    await page.reload()
+    await expect(page.getByTestId('session-unavailable')).toBeVisible()
+    await expect(page).not.toHaveURL(/\/login/)
+    await page.unroute(`${apiOrigin}/api/v1/**`)
+    await page.getByTestId('session-retry').click()
+    await expect(page.getByTestId('chats-heading')).toBeVisible()
+  })
+
   test('clears credentials on logout and rejects a revoked refresh cookie', async ({ page, context }) => {
     const accounts = loadAccounts()
     await login(page, accounts.alpha)

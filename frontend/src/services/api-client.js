@@ -6,9 +6,12 @@ import {
   clearTokens,
   getAccessToken,
   getCsrfToken,
+  subscribeSession,
 } from '@/services/session-tokens'
 
 const mutatingMethods = new Set(['post', 'put', 'patch', 'delete'])
+const REFRESH_LOCK = 'michat-auth-refresh'
+const SESSION_INVALID_CODES = new Set(['CSRF_FAILED', 'INVALID_SESSION', 'TRANSPORT_FORBIDDEN'])
 
 function isAuthRefreshUrl(url = '') {
   return url.includes('/api/v1/auth/refresh')
@@ -19,8 +22,14 @@ function isAuthLoginUrl(url = '') {
 }
 
 export function isAuthFailure(error) {
+  return isSessionInvalid(error)
+}
+
+export function isSessionInvalid(error) {
   const status = error?.status ?? error?.response?.status
-  return status === 401 || status === 403
+  if (status === 401) return true
+  const code = error?.code ?? error?.response?.data?.error?.code
+  return status === 403 && SESSION_INVALID_CODES.has(code)
 }
 
 function attachCommonHeaders(config) {
@@ -66,24 +75,53 @@ export const apiClient = axios.create({
 apiClient.interceptors.request.use(attachCommonHeaders)
 
 let refreshPromise = null
+let lastRefreshPayload = null
+let lastRefreshAt = 0
+
+subscribeSession((event, detail) => {
+  if (event === 'refreshed' && detail?.accessToken) {
+    lastRefreshPayload = detail
+    lastRefreshAt = Date.now()
+  }
+  if (event === 'cleared') {
+    lastRefreshPayload = null
+    lastRefreshAt = 0
+  }
+})
+
+function recentRefreshPayload(maxAge = 2500) {
+  if (lastRefreshPayload && Date.now() - lastRefreshAt < maxAge) return lastRefreshPayload
+  return null
+}
+
+async function performRefresh() {
+  const recent = recentRefreshPayload()
+  if (recent) return recent
+  const response = await rawClient.post('/api/v1/auth/refresh', { clientType: 'web' })
+  lastRefreshPayload = response.data
+  lastRefreshAt = Date.now()
+  applyTokens(
+    {
+      accessToken: response.data.accessToken,
+      csrfToken: response.data.csrfToken,
+    },
+    response.data,
+  )
+  return response.data
+}
+
+async function runLockedRefresh() {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : null
+  if (!locks?.request) return performRefresh()
+  return locks.request(REFRESH_LOCK, () => performRefresh())
+}
 
 export async function refreshAccessToken() {
   if (!refreshPromise) {
-    refreshPromise = rawClient
-      .post('/api/v1/auth/refresh', { clientType: 'web' })
-      .then((response) => {
-        applyTokens(
-          {
-            accessToken: response.data.accessToken,
-            csrfToken: response.data.csrfToken,
-          },
-          response.data,
-        )
-        return response.data
-      })
+    refreshPromise = runLockedRefresh()
       .catch((error) => {
         const apiError = toApiError(error)
-        if (isAuthFailure(apiError)) clearTokens()
+        if (isSessionInvalid(apiError)) clearTokens()
         throw apiError
       })
       .finally(() => {

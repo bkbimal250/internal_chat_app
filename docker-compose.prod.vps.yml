@@ -65,6 +65,12 @@ services:
       - ${FIREBASE_SECRET_PATH:-./deploy/secrets/firebase-unconfigured.json}:/app/secrets/firebase-service-account.json:ro
     ports:
       - "127.0.0.1:${API_HOST_PORT:-3045}:3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health/ready',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 4s
+      retries: 8
+      start_period: 45s
     stop_grace_period: 75s
     restart: unless-stopped
     logging: *default-logging

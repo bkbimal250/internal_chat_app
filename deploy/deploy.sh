@@ -31,10 +31,11 @@ if [[ "${ENV_FILE}" == *".example" ]]; then
   exit 1
 fi
 
-previous="${IMAGE_TAG:-}"
-if [[ -f .deployed-sha ]]; then
-  previous="$(tr -d '[:space:]' < .deployed-sha)"
-  printf '%s\n' "$previous" > .previous-sha
+previous=""
+if previous="$(record_previous_tag "$TAG")"; then
+  true
+else
+  previous=""
 fi
 
 api_base="${API_IMAGE%:*}"
@@ -70,14 +71,19 @@ echo "Host Nginx and host PostgreSQL are not managed by Compose"
 compose up -d --no-deps --no-build --pull never "${services[@]}"
 
 if ! "$ROOT_DIR/deploy/healthcheck.sh"; then
-  echo "Deployment health checks failed; restoring ${previous:-previous images}" >&2
+  echo "Deployment health checks failed; not recording ${TAG} as deployed." >&2
   if [[ "$NO_ROLLBACK" -eq 0 && -n "${previous}" && "${previous}" != "${TAG}" ]]; then
-    if ! "$ROOT_DIR/deploy/rollback.sh"; then
-      echo "Rollback failed; application images may still be ${TAG}" >&2
+    echo "Attempting rollback to ${previous}" >&2
+    if ! "$ROOT_DIR/deploy/rollback.sh" "$previous"; then
+      echo "Rollback failed; application images may still be ${TAG}. Database schema was not reverted." >&2
+    else
+      echo "Rollback restored ${previous}. Database schema was not reverted." >&2
     fi
+  else
+    echo "No previous verified image to restore; leaving ${TAG} in place." >&2
   fi
   exit 1
 fi
 
-printf '%s\n' "$TAG" > .deployed-sha
+record_deployed_tag "$TAG"
 echo "Deployed ${TAG}"

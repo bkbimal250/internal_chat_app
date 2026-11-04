@@ -189,6 +189,14 @@ test('deploy.sh validates VPS safety after load_env and backups before migrate',
   assert.doesNotMatch(compose, /^\s+nginx:/m);
   assert.doesNotMatch(compose, /^\s+caddy:/m);
   assert.match(health, /RETENTION_WORKER_ENABLED is off/);
+  assert.match(health, /run_check "api live"/);
+  assert.match(health, /run_check "api ready"/);
+  assert.match(health, /wait_for_http_check/);
+  assert.match(deploy, /record_previous_tag/);
+  assert.match(deploy, /record_deployed_tag/);
+  assert.match(deploy, /No previous verified image to restore/);
+  assert.match(lib, /atomic_write/);
+  assert.match(lib, /HEALTH_ATTEMPTS/);
   assert.match(vpsEnv, /RETENTION_WORKER_ENABLED=0/);
   assert.match(vpsEnv, /DEPLOY_TARGET=vps/);
   assert.match(vpsEnv, /COMPOSE_FILE=docker-compose\.prod\.vps\.yml/);

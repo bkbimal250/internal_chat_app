@@ -10,15 +10,15 @@ export function loadAccounts() {
 }
 
 export async function openPasswordLogin(page) {
-  await page.getByTestId('login-tab-password').click()
+  await page.getByTestId('login-try-another-way').click()
   await expect(page.getByTestId('login-username')).toBeVisible()
 }
 
 export async function login(page, user, landing = 'chats') {
-  await page.goto('/login')
+  await page.goto('/')
   const chats = page.getByTestId('chats-heading')
   const changeHeading = page.getByRole('heading', { name: 'Change password' })
-  const passwordTab = page.getByTestId('login-tab-password')
+  const passwordTab = page.getByTestId('login-try-another-way')
 
   await expect(passwordTab.or(chats).or(changeHeading)).toBeVisible({ timeout: 20_000 })
   if (landing === 'chats' && (await chats.isVisible().catch(() => false))) return

@@ -33,7 +33,7 @@ export function ChangePasswordForm({ onSuccess, submitClassName }) {
       })
       toast.success('Password updated. Sign in with your new password.')
       onSuccess?.()
-      navigate('/login', { replace: true })
+      navigate('/', { replace: true })
     } catch (error) {
       toast.error(getErrorMessage(error))
     }

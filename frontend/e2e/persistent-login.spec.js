@@ -32,7 +32,7 @@ test.describe('Persistent login', () => {
     await page.reload()
     await expect(page.getByTestId('session-restoring').or(page.getByTestId('chats-heading'))).toBeVisible()
     await expect(page.getByTestId('chats-heading')).toBeVisible()
-    await expect(page).not.toHaveURL(/\/login/)
+    await expect(page).toHaveURL(`${appOrigin}/`)
     await expect(page.getByTestId('realtime-status')).toHaveText('Realtime connected', { timeout: 20_000 })
   })
 
@@ -81,7 +81,8 @@ test.describe('Persistent login', () => {
     await expect(pageA.getByTestId('chats-heading')).toBeVisible()
     await expect(pageB.getByTestId('chats-heading')).toBeVisible()
     await pageA.getByTestId('sign-out').click()
-    await expect(pageA).toHaveURL(/\/login/)
+    await expect(pageA).toHaveURL(`${appOrigin}/`)
+    await expect(pageA.getByTestId('login-phone')).toBeVisible()
     await pageB.reload()
     await expect(pageB.getByTestId('chats-heading')).toBeVisible()
     await first.close()
@@ -94,7 +95,7 @@ test.describe('Persistent login', () => {
     await page.route(`${apiOrigin}/api/v1/**`, (route) => route.abort('failed'))
     await page.reload()
     await expect(page.getByTestId('session-unavailable')).toBeVisible()
-    await expect(page).not.toHaveURL(/\/login/)
+    await expect(page).toHaveURL(`${appOrigin}/`)
     await page.unroute(`${apiOrigin}/api/v1/**`)
     await page.getByTestId('session-retry').click()
     await expect(page.getByTestId('chats-heading')).toBeVisible()
@@ -104,12 +105,14 @@ test.describe('Persistent login', () => {
     const accounts = loadAccounts()
     await login(page, accounts.alpha)
     await page.getByTestId('sign-out').click()
-    await expect(page).toHaveURL(/\/login/)
+    await expect(page).toHaveURL(`${appOrigin}/`)
+    await expect(page.getByTestId('login-phone')).toBeVisible()
     const cookies = await context.cookies()
     const refresh = cookies.find((cookie) => cookie.name === 'chat_refresh')
     expect(!refresh || refresh.expires * 1000 <= Date.now()).toBeTruthy()
     await page.goto('/')
-    await expect(page).toHaveURL(/\/login/)
+    await expect(page).toHaveURL(`${appOrigin}/`)
+    await expect(page.getByTestId('login-phone')).toBeVisible()
   })
 
   test('restores the session from a restarted browser profile', async () => {
@@ -124,7 +127,7 @@ test.describe('Persistent login', () => {
     const first = await launch()
     try {
       const page = first.pages()[0] || (await first.newPage())
-      await page.goto(`${appOrigin}/login`)
+      await page.goto(`${appOrigin}/`)
       await login(page, accounts.alpha)
       await expectPersistentCookies(first)
     } finally {
@@ -136,7 +139,7 @@ test.describe('Persistent login', () => {
       const page = second.pages()[0] || (await second.newPage())
       await page.goto(`${appOrigin}/`)
       await expect(page.getByTestId('chats-heading')).toBeVisible({ timeout: 20_000 })
-      await expect(page).not.toHaveURL(/\/login/)
+      await expect(page).toHaveURL(`${appOrigin}/`)
       await expect(page.getByTestId('realtime-status')).toHaveText('Realtime connected', { timeout: 20_000 })
     } finally {
       await second.close()

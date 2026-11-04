@@ -56,7 +56,8 @@ test.describe('Single-URL workspace', () => {
     await expect(page.getByRole('heading', { name: 'Employee directory' })).toBeVisible()
 
     await page.getByTestId('sign-out').click()
-    await expect(page).toHaveURL(/\/login/)
+    await expect(page).toHaveURL(HOME)
+    await expect(page.getByTestId('login-phone')).toBeVisible()
     const stored = await page.evaluate(() => sessionStorage.getItem('company-chat.workspace'))
     expect(stored).toBeNull()
   })

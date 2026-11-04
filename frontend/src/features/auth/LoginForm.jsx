@@ -5,13 +5,12 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { DEFAULT_WORKSPACE, fromLegacyPath } from '@/lib/workspace'
 import { useUiStore } from '@/stores/ui-store'
 import { Eye, EyeOff } from 'lucide-react'
-import { toast } from 'sonner'
 import { COUNTRY_CODES, loginSchema, otpRequestSchema, otpVerifySchema, toE164 } from '@/features/auth/schemas'
+import { OtpCodeInput } from '@/features/auth/OtpCodeInput'
 import { useAuth } from '@/hooks/use-auth'
 import { getErrorMessage } from '@/services/api-error'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Form,
   FormControl,
@@ -21,14 +20,18 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 
+const fieldClass = 'h-12 rounded-lg bg-white text-base md:text-base'
+
 export function LoginForm() {
   const { login, requestOtp, loginWithOtp } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const [method, setMethod] = useState('phone')
   const [showPassword, setShowPassword] = useState(false)
   const [otpPhone, setOtpPhone] = useState('')
   const [cooldown, setCooldown] = useState(0)
   const [expiresIn, setExpiresIn] = useState(0)
+  const [formError, setFormError] = useState('')
   const passwordForm = useForm({
     resolver: zodResolver(loginSchema),
     defaultValues: { username: '', password: '' },
@@ -56,23 +59,27 @@ export function LoginForm() {
       navigate('/change-password', { replace: true })
       return
     }
-    const mapped = fromLegacyPath(location.state?.from?.pathname) ?? DEFAULT_WORKSPACE
+    const fromPath = location.state?.from?.pathname
+    const mapped = fromLegacyPath(fromPath) ?? DEFAULT_WORKSPACE
     useUiStore.getState().openWorkspace(mapped, {
       history: 'none',
       allowAdmin: session.user?.role === 'admin',
     })
-    navigate('/', { replace: true })
+    const nextPath = fromPath && fromPath !== '/' && fromPath !== '/login' ? fromPath : '/'
+    navigate(nextPath, { replace: true })
   }
 
   async function onPassword(values) {
+    setFormError('')
     try {
       afterLogin(await login(values))
     } catch (error) {
-      toast.error(getErrorMessage(error))
+      setFormError(getErrorMessage(error))
     }
   }
 
   async function sendCode(values) {
+    setFormError('')
     try {
       const phone = toE164(values.countryDial, values.nationalNumber)
       const result = await requestOtp(phone)
@@ -80,134 +87,196 @@ export function LoginForm() {
       setCooldown(result.retryAfterSeconds ?? 60)
       setExpiresIn(result.expiresInSeconds ?? 300)
       codeForm.reset({ code: '' })
-      toast.success('If the number is registered, a code will arrive shortly.')
+      setMethod('otp')
     } catch (error) {
-      toast.error(getErrorMessage(error))
+      setFormError(getErrorMessage(error))
     }
+  }
+
+  async function resendCode() {
+    if (cooldown > 0 || !otpPhone) return
+    const values = phoneForm.getValues()
+    await sendCode(values)
   }
 
   async function onVerify(values) {
+    setFormError('')
     try {
       afterLogin(await loginWithOtp({ phone: otpPhone, code: values.code }))
     } catch (error) {
-      toast.error(getErrorMessage(error))
+      setFormError(getErrorMessage(error))
     }
   }
 
+  const heading =
+    method === 'password'
+      ? 'Sign in with username'
+      : method === 'otp'
+        ? 'Verify your number'
+        : 'Welcome to Company Chat'
+  const description =
+    method === 'password'
+      ? 'Use your company account credentials.'
+      : method === 'otp'
+        ? 'Enter the 6-digit code sent to your mobile number.'
+        : 'Enter your mobile number to sign in.'
+
   return (
-    <Tabs defaultValue="otp" className="w-full">
-      <TabsList className="grid w-full grid-cols-2">
-        <TabsTrigger value="otp" data-testid="login-tab-otp">
-          Phone & OTP
-        </TabsTrigger>
-        <TabsTrigger value="password" data-testid="login-tab-password">
-          Username & password
-        </TabsTrigger>
-      </TabsList>
-      <TabsContent value="otp" className="pt-4">
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <h1 className="font-display text-2xl tracking-tight text-[#171E25] sm:text-3xl" data-testid="login-heading">
+          {heading}
+        </h1>
+        <p className="text-sm leading-relaxed text-[#66717D]" data-testid="login-description">
+          {description}
+        </p>
+        {method === 'otp' && otpPhone ? (
+          <p className="text-sm font-medium text-[#171E25]" data-testid="login-otp-phone">
+            {otpPhone}
+          </p>
+        ) : null}
+      </div>
+
+      {formError ? (
+        <p
+          className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+          role="alert"
+          aria-live="assertive"
+        >
+          {formError}
+        </p>
+      ) : null}
+
+      {method === 'phone' ? (
         <Form {...phoneForm}>
-          <form onSubmit={phoneForm.handleSubmit(sendCode)} className="space-y-4" noValidate>
-            <div className="grid grid-cols-[8.5rem_1fr] gap-2">
-              <FormField
-                control={phoneForm.control}
-                name="countryDial"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Country</FormLabel>
-                    <FormControl>
-                      <select
-                        className="border-input h-10 w-full rounded-md border bg-card px-2 text-sm"
-                        data-testid="login-country"
-                        {...field}
-                      >
-                        {COUNTRY_CODES.map((country) => (
-                          <option key={country.iso} value={country.dial}>
-                            {country.label}
-                          </option>
-                        ))}
-                      </select>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={phoneForm.control}
-                name="nationalNumber"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Phone number</FormLabel>
-                    <FormControl>
-                      <Input
-                        inputMode="tel"
-                        autoComplete="tel-national"
-                        placeholder="9876543210"
-                        data-testid="login-phone"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+          <form onSubmit={phoneForm.handleSubmit(sendCode)} className="space-y-5" noValidate>
+            <div className="space-y-2">
+              <p className="text-sm font-medium" id="login-phone-label">
+                Mobile number
+              </p>
+              <div className="grid grid-cols-[6.75rem_1fr] gap-2 sm:grid-cols-[7.5rem_1fr]">
+                <FormField
+                  control={phoneForm.control}
+                  name="countryDial"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="sr-only">Country code</FormLabel>
+                      <FormControl>
+                        <select
+                          className={`border-input ${fieldClass} w-full border px-2`}
+                          data-testid="login-country"
+                          aria-label="Country code"
+                          {...field}
+                        >
+                          {COUNTRY_CODES.map((country) => (
+                            <option key={country.iso} value={country.dial}>
+                              {country.dial}
+                            </option>
+                          ))}
+                        </select>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={phoneForm.control}
+                  name="nationalNumber"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="sr-only">Enter mobile number</FormLabel>
+                      <FormControl>
+                        <Input
+                          inputMode="tel"
+                          autoComplete="tel-national"
+                          autoFocus
+                          placeholder="Enter your 10-digit mobile number"
+                          data-testid="login-phone"
+                          aria-labelledby="login-phone-label"
+                          className={fieldClass}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
             </div>
             <Button
               type="submit"
-              className="w-full"
+              className="h-12 w-full text-base"
               size="lg"
               disabled={phoneForm.formState.isSubmitting || cooldown > 0}
               data-testid="login-otp-send"
             >
-              {phoneForm.formState.isSubmitting
-                ? 'Sending…'
-                : cooldown > 0
-                  ? `Resend in ${cooldown}s`
-                  : otpPhone
-                    ? 'Resend code'
-                    : 'Send OTP'}
+              {phoneForm.formState.isSubmitting ? 'Sending…' : cooldown > 0 ? `Resend in ${cooldown}s` : 'Send OTP'}
             </Button>
           </form>
         </Form>
-        {otpPhone ? (
-          <Form {...codeForm}>
-            <form onSubmit={codeForm.handleSubmit(onVerify)} className="mt-5 space-y-4" noValidate>
-              <FormField
-                control={codeForm.control}
-                name="code"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Six-digit code</FormLabel>
-                    <FormControl>
-                      <Input
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        maxLength={6}
-                        placeholder="000000"
-                        data-testid="login-otp"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <p className="text-xs text-muted-foreground">
-                {expiresIn > 0 ? `Code expires in ${expiresIn}s.` : 'Request a new code if this one expired.'}
-              </p>
-              <Button
-                type="submit"
-                className="w-full"
-                size="lg"
-                disabled={codeForm.formState.isSubmitting}
-                data-testid="login-otp-verify"
+      ) : null}
+
+      {method === 'otp' ? (
+        <Form {...codeForm}>
+          <form onSubmit={codeForm.handleSubmit(onVerify)} className="space-y-5" noValidate>
+            <FormField
+              control={codeForm.control}
+              name="code"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Enter 6-digit code</FormLabel>
+                  <FormControl>
+                    <OtpCodeInput
+                      value={field.value}
+                      onChange={field.onChange}
+                      disabled={codeForm.formState.isSubmitting}
+                      error={Boolean(codeForm.formState.errors.code)}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <p className="text-sm text-[#66717D]">
+              {expiresIn > 0 ? `Code expires in ${expiresIn}s.` : 'Request a new code if this one expired.'}
+            </p>
+            <Button
+              type="submit"
+              className="h-12 w-full text-base"
+              size="lg"
+              disabled={codeForm.formState.isSubmitting}
+              data-testid="login-otp-verify"
+            >
+              {codeForm.formState.isSubmitting ? 'Verifying…' : 'Verify & Sign in'}
+            </Button>
+            <div className="flex flex-col items-center gap-2 text-sm">
+              <button
+                type="button"
+                className="text-[#171E25] underline-offset-4 hover:underline disabled:opacity-50"
+                disabled={cooldown > 0 || phoneForm.formState.isSubmitting}
+                data-testid="login-otp-resend"
+                onClick={resendCode}
               >
-                {codeForm.formState.isSubmitting ? 'Verifying…' : 'Verify and sign in'}
-              </Button>
-            </form>
-          </Form>
-        ) : null}
-      </TabsContent>
-      <TabsContent value="password" className="pt-4">
+                {cooldown > 0 ? `Resend OTP in ${cooldown}s` : 'Resend OTP'}
+              </button>
+              <button
+                type="button"
+                className="text-[#66717D] underline-offset-4 hover:underline"
+                data-testid="login-change-phone"
+                onClick={() => {
+                  setMethod('phone')
+                  setFormError('')
+                  codeForm.reset({ code: '' })
+                }}
+              >
+                Change phone number
+              </button>
+            </div>
+          </form>
+        </Form>
+      ) : null}
+
+      {method === 'password' ? (
         <Form {...passwordForm}>
           <form onSubmit={passwordForm.handleSubmit(onPassword)} className="space-y-5" noValidate>
             <FormField
@@ -221,6 +290,7 @@ export function LoginForm() {
                       autoComplete="username"
                       placeholder="jane.doe"
                       data-testid="login-username"
+                      className={fieldClass}
                       {...field}
                     />
                   </FormControl>
@@ -240,7 +310,7 @@ export function LoginForm() {
                         type={showPassword ? 'text' : 'password'}
                         autoComplete="current-password"
                         data-testid="login-password"
-                        className="pr-10"
+                        className={`${fieldClass} pr-12`}
                         {...field}
                       />
                     </FormControl>
@@ -248,7 +318,7 @@ export function LoginForm() {
                       type="button"
                       variant="ghost"
                       size="icon"
-                      className="absolute top-0 right-0"
+                      className="absolute top-1 right-1 size-10"
                       aria-label={showPassword ? 'Hide password' : 'Show password'}
                       data-testid="login-password-toggle"
                       onClick={() => setShowPassword((value) => !value)}
@@ -262,7 +332,7 @@ export function LoginForm() {
             />
             <Button
               type="submit"
-              className="w-full"
+              className="h-12 w-full text-base"
               size="lg"
               disabled={passwordForm.formState.isSubmitting}
               data-testid="login-submit"
@@ -271,7 +341,35 @@ export function LoginForm() {
             </Button>
           </form>
         </Form>
-      </TabsContent>
-    </Tabs>
+      ) : null}
+
+      {method === 'password' ? (
+        <button
+          type="button"
+          className="mx-auto block text-sm text-[#66717D] underline-offset-4 hover:text-[#171E25] hover:underline"
+          data-testid="login-back-to-otp"
+          onClick={() => {
+            setMethod('phone')
+            setFormError('')
+          }}
+        >
+          Back to Phone & OTP
+        </button>
+      ) : null}
+
+      {method === 'phone' ? (
+        <button
+          type="button"
+          className="mx-auto block text-sm text-[#66717D] underline-offset-4 hover:text-[#171E25] hover:underline"
+          data-testid="login-try-another-way"
+          onClick={() => {
+            setMethod('password')
+            setFormError('')
+          }}
+        >
+          Try another way
+        </button>
+      ) : null}
+    </div>
   )
 }

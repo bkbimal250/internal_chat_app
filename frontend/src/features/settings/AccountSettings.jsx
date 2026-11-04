@@ -220,7 +220,7 @@ export function SessionsPane({ onBack }) {
     try {
       await authApi.logoutAll()
       useAuthStore.getState().reset()
-      navigate('/login', { replace: true })
+      navigate('/', { replace: true })
     } catch (error) {
       toast.error(getErrorMessage(error))
     }

@@ -1,37 +1,36 @@
 import { Outlet } from 'react-router-dom'
-import { motion } from 'motion/react'
 import { BrandMark } from '@/components/common/BrandMark'
 
-export function AuthLayout() {
+export function AuthLayout({ children }) {
   return (
-    <div className="grid min-h-dvh lg:grid-cols-[1.1fr_0.9fr]">
-      <aside className="relative hidden overflow-hidden bg-sidebar text-sidebar-foreground lg:flex lg:flex-col lg:justify-between lg:p-12">
+    <div className="grid min-h-dvh bg-[#FAF6EF] md:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+      <aside
+        className="relative hidden overflow-hidden bg-[#171E25] text-[#FAF6EF] md:flex md:flex-col md:justify-between md:px-10 md:py-10 lg:px-14 lg:py-12"
+        data-testid="login-branding"
+      >
         <BrandMark inverted />
-        <div className="max-w-md">
-          <p className="text-xs font-semibold tracking-[0.22em] text-gold uppercase">Private workspace</p>
-          <h1 className="font-display mt-4 text-4xl leading-tight">
-            A quiet, reliable place for company conversations.
+        <div className="relative z-10 max-w-lg">
+          <p className="text-xs font-semibold tracking-[0.22em] text-[#C6A04B] uppercase">Internal workspace</p>
+          <h1 className="font-display mt-5 text-3xl leading-tight lg:text-4xl xl:text-5xl">
+            Your team. One connected workspace.
           </h1>
-          <p className="mt-4 text-sm text-sidebar-foreground/70">
-            Sign in with your employee account. Sessions stay on this device, refresh cookies stay
-            HTTP-only, and access tokens never land in local storage.
+          <div className="mt-5 h-px w-16 bg-[#C6A04B]/80" aria-hidden="true" />
+          <p className="mt-5 max-w-md text-sm leading-relaxed text-[#FAF6EF]/72 lg:text-base">
+            Stay connected with your team through simple, secure and reliable conversations.
           </p>
         </div>
-        <p className="text-xs text-sidebar-foreground/50">Company Chat · ivory, slate, gold</p>
-        <div className="pointer-events-none absolute -right-16 -bottom-20 size-72 rounded-full border border-gold/20" />
+        <p className="relative z-10 text-sm text-[#FAF6EF]/45">Company Chat</p>
+        <div className="pointer-events-none absolute -top-24 -right-16 size-72 rounded-full border border-[#C6A04B]/20" />
+        <div className="pointer-events-none absolute right-16 bottom-24 size-40 rounded-full border border-[#FAF6EF]/10" />
+        <div className="pointer-events-none absolute bottom-[-4rem] left-[-3rem] size-56 rotate-12 rounded-3xl border border-[#C6A04B]/12" />
       </aside>
-      <main className="flex items-center justify-center px-6 py-12">
-        <motion.div
-          className="w-full max-w-md"
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35 }}
-        >
-          <div className="mb-8 lg:hidden">
+      <main className="flex items-center justify-center px-4 py-8 sm:px-8 lg:px-12">
+        <div className="w-full max-w-md">
+          <div className="mb-8 md:hidden">
             <BrandMark />
           </div>
-          <Outlet />
-        </motion.div>
+          {children ?? <Outlet />}
+        </div>
       </main>
     </div>
   )

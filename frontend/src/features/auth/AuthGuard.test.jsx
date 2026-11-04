@@ -3,7 +3,6 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { cleanup, render, screen } from '@testing-library/react'
 import { AuthGuard } from '@/features/auth/AuthGuard'
 import { AdminGuard } from '@/features/auth/AdminGuard'
-import { GuestGuard } from '@/features/auth/GuestGuard'
 
 vi.mock('@/hooks/use-auth', () => ({
   useAuth: vi.fn(),
@@ -15,30 +14,9 @@ function renderAt(path) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route
-          path="/login"
-          element={
-            <GuestGuard>
-              <p>login page</p>
-            </GuestGuard>
-          }
-        />
-        <Route
-          path="/change-password"
-          element={
-            <AuthGuard>
-              <p>password page</p>
-            </AuthGuard>
-          }
-        />
-        <Route
-          path="/"
-          element={
-            <AuthGuard>
-              <p>chat page</p>
-            </AuthGuard>
-          }
-        />
+        <Route path="/" element={<p>root page</p>} />
+        <Route path="/change-password" element={<AuthGuard><p>password page</p></AuthGuard>} />
+        <Route path="/app" element={<AuthGuard><p>chat page</p></AuthGuard>} />
         <Route
           path="/admin"
           element={
@@ -61,27 +39,27 @@ describe('route guards', () => {
 
   it('shows a restoring screen until session restoration finishes', () => {
     useAuth.mockReturnValue({ isAuthenticated: false, isLoading: true, mustChangePassword: false })
-    renderAt('/')
+    renderAt('/app')
     expect(screen.getByTestId('session-restoring')).toBeInTheDocument()
-    expect(screen.queryByText('login page')).not.toBeInTheDocument()
+    expect(screen.queryByText('root page')).not.toBeInTheDocument()
     expect(screen.queryByText('chat page')).not.toBeInTheDocument()
   })
 
-  it('sends anonymous users to login', () => {
+  it('sends anonymous users to / instead of /login', () => {
     useAuth.mockReturnValue({ isAuthenticated: false, isLoading: false, mustChangePassword: false })
-    renderAt('/')
-    expect(screen.getByText('login page')).toBeInTheDocument()
+    renderAt('/app')
+    expect(screen.getByText('root page')).toBeInTheDocument()
   })
 
   it('protects chat until the first password change is complete', () => {
     useAuth.mockReturnValue({ isAuthenticated: true, isLoading: false, mustChangePassword: true })
-    renderAt('/')
+    renderAt('/app')
     expect(screen.getByText('password page')).toBeInTheDocument()
   })
 
   it('allows authenticated employees into chat', () => {
     useAuth.mockReturnValue({ isAuthenticated: true, isLoading: false, mustChangePassword: false })
-    renderAt('/')
+    renderAt('/app')
     expect(screen.getByText('chat page')).toBeInTheDocument()
   })
 
@@ -89,7 +67,7 @@ describe('route guards', () => {
     useAuth.mockReturnValue({ isAuthenticated: false, isLoading: true, mustChangePassword: false, isAdmin: false })
     renderAt('/admin')
     expect(screen.getByTestId('session-restoring')).toBeInTheDocument()
-    expect(screen.queryByText('login page')).not.toBeInTheDocument()
+    expect(screen.queryByText('root page')).not.toBeInTheDocument()
     expect(screen.queryByText('admin page')).not.toBeInTheDocument()
   })
 
@@ -112,7 +90,7 @@ describe('route guards', () => {
       isAdmin: false,
     })
     renderAt('/admin')
-    expect(screen.getByText('chat page')).toBeInTheDocument()
+    expect(screen.getByText('root page')).toBeInTheDocument()
     expect(screen.queryByText('admin page')).not.toBeInTheDocument()
   })
 })

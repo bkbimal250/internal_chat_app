@@ -8,7 +8,7 @@ export function AuthGuard({ children }) {
 
   if (isLoading) return <SessionLoading />
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace state={{ from: location }} />
+    return <Navigate to="/" replace state={{ from: location }} />
   }
   if (mustChangePassword && location.pathname !== '/change-password') {
     return <Navigate to="/change-password" replace />

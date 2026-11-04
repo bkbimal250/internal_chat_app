@@ -59,27 +59,98 @@ test('SSH connection test is dispatch-only and never deploys', () => {
   assert.doesNotMatch(workflow, /pg_dump|psql|nginx/i);
 });
 
-test('CD refuses unauthorized refs even when DEPLOY_ENABLED is true', () => {
+test('CD allows one-time dispatch deploy without enabling auto-deploy', () => {
   const workflow = read('.github/workflows/cd.yml');
+  assert.match(workflow, /deploy_once:/);
+  assert.match(workflow, /type: boolean/);
+  assert.match(workflow, /default: false/);
   assert.match(workflow, /name: Require main branch/);
-  assert.match(workflow, /Production CD is limited to the main branch/);
-  assert.match(workflow, /Production CD cannot run from a pull request/);
+  assert.match(workflow, /bash deploy\/cd-gate\.sh require-main/);
+  assert.match(workflow, /bash deploy\/cd-gate\.sh should-deploy/);
   const mainGuards = workflow.match(/github\.ref == 'refs\/heads\/main'/g) ?? [];
   assert.ok(mainGuards.length >= 4, 'ci, publish, deploy-gate, and deploy must require main');
   assert.match(
     workflow,
-    /github\.ref == 'refs\/heads\/main' && needs\.deploy-gate\.outputs\.enabled == 'true' && vars\.DEPLOY_ENABLED == 'true'/,
+    /github\.ref == 'refs\/heads\/main' && needs\.deploy-gate\.outputs\.enabled == 'true'/,
   );
-  assert.doesNotMatch(workflow, /DEPLOY_ENABLED:\s*['"]?true['"]?/);
   assert.doesNotMatch(
     workflow,
-    /github\.event_name == 'workflow_dispatch' && vars\.DEPLOY_ENABLED/,
+    /needs\.deploy-gate\.outputs\.enabled == 'true' && vars\.DEPLOY_ENABLED == 'true'/,
   );
+  assert.doesNotMatch(workflow, /DEPLOY_ENABLED:\s*['"]?true['"]?/);
+  assert.match(workflow, /environment: production/);
+  assert.match(workflow, /group: cd-main/);
+  assert.match(workflow, /group: production-deploy/);
+  assert.match(workflow, /cancel-in-progress: false/);
   assert.match(workflow, /secrets\.VPS_USER \}\}" != "deploy"/);
   assert.match(workflow, /REMOTE_USER" != "deploy"/);
   assert.match(workflow, /deploy\.sh \$\{IMAGE_TAG\}/);
   assert.doesNotMatch(workflow, /sudo .*deploy\.sh/);
+  assert.doesNotMatch(workflow, /pull_request:/);
 });
+
+test(
+  'CD gate authorizes push auto-deploy and dispatch deploy_once only on main',
+  { skip: !bash && 'bash is not available on this host' },
+  () => {
+    const runGate = (command, env) =>
+      spawnSync(bash, ['deploy/cd-gate.sh', command], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, GITHUB_HEAD_REF: '', ...env },
+      });
+
+    const mainPush = { GITHUB_REF: 'refs/heads/main', GITHUB_EVENT_NAME: 'push', GITHUB_HEAD_REF: '' };
+    const mainDispatch = {
+      GITHUB_REF: 'refs/heads/main',
+      GITHUB_EVENT_NAME: 'workflow_dispatch',
+      GITHUB_HEAD_REF: '',
+    };
+
+    assert.equal(runGate('require-main', mainPush).status, 0);
+    assert.equal(runGate('should-deploy', { ...mainPush, DEPLOY_ENABLED: 'true' }).status, 0);
+    assert.notEqual(runGate('should-deploy', { ...mainPush, DEPLOY_ENABLED: '' }).status, 0);
+    assert.notEqual(runGate('should-deploy', { ...mainPush, DEPLOY_ENABLED: 'false' }).status, 0);
+
+    assert.equal(runGate('should-deploy', { ...mainDispatch, DEPLOY_ONCE: 'true' }).status, 0);
+    assert.notEqual(runGate('should-deploy', { ...mainDispatch, DEPLOY_ONCE: 'false' }).status, 0);
+    assert.notEqual(runGate('should-deploy', { ...mainDispatch, DEPLOY_ONCE: '' }).status, 0);
+    assert.notEqual(
+      runGate('should-deploy', { ...mainDispatch, DEPLOY_ENABLED: 'true', DEPLOY_ONCE: 'false' }).status,
+      0,
+      'dispatch must not auto-deploy just because DEPLOY_ENABLED is true',
+    );
+
+    const featureDispatch = {
+      GITHUB_REF: 'refs/heads/feature',
+      GITHUB_EVENT_NAME: 'workflow_dispatch',
+      GITHUB_HEAD_REF: '',
+      DEPLOY_ONCE: 'true',
+    };
+    assert.notEqual(runGate('require-main', featureDispatch).status, 0);
+    assert.notEqual(runGate('should-deploy', featureDispatch).status, 0);
+    assert.match(`${runGate('require-main', featureDispatch).stderr}`, /main branch/);
+
+    const pullRequest = {
+      GITHUB_REF: 'refs/pull/12/merge',
+      GITHUB_EVENT_NAME: 'pull_request',
+      GITHUB_HEAD_REF: 'feature',
+      DEPLOY_ENABLED: 'true',
+      DEPLOY_ONCE: 'true',
+    };
+    assert.notEqual(runGate('require-main', pullRequest).status, 0);
+    assert.notEqual(runGate('should-deploy', pullRequest).status, 0);
+    assert.match(`${runGate('require-main', pullRequest).stderr}`, /pull request/);
+
+    const pullLikePush = {
+      GITHUB_REF: 'refs/heads/main',
+      GITHUB_EVENT_NAME: 'push',
+      GITHUB_HEAD_REF: 'feature',
+      DEPLOY_ENABLED: 'true',
+    };
+    assert.notEqual(runGate('require-main', pullLikePush).status, 0);
+  },
+);
 
 test('deploy.sh validates VPS safety after load_env and backups before migrate', () => {
   const deploy = read('deploy/deploy.sh');
@@ -149,7 +220,14 @@ test(
   'bash deploy guards reject unsafe Compose and env overrides',
   { skip: !bash && 'bash is not available on this host' },
   () => {
-    const syntax = ['deploy/lib.sh', 'deploy/deploy.sh', 'deploy/backup.sh', 'deploy/healthcheck.sh', 'deploy/rollback.sh'];
+    const syntax = [
+      'deploy/lib.sh',
+      'deploy/deploy.sh',
+      'deploy/backup.sh',
+      'deploy/healthcheck.sh',
+      'deploy/rollback.sh',
+      'deploy/cd-gate.sh',
+    ];
     for (const file of syntax) {
       const checked = spawnSync(bash, ['-n', file], { cwd: root, encoding: 'utf8' });
       assert.equal(checked.status, 0, checked.stderr || file);

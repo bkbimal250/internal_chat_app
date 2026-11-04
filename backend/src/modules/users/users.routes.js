@@ -7,13 +7,17 @@ import {
   PhotoCompleteBody,
   PhotoInitBody,
   PhotoInitResponse,
+  PhoneOtpBody,
+  PhoneVerifyBody,
   PhotoUrlResponse,
+  OtpRequestResponse,
   UpdateMe,
   User,
   pageOf,
 } from './users.schema.js';
 export default async function userRoutes(app, config) {
   const c = usersController(app, config);
+  const otpRate = { rateLimit: { max: config.otpRateLimit, timeWindow: '1 minute' } };
   app.get(
     '/api/v1/users',
     {
@@ -36,6 +40,31 @@ export default async function userRoutes(app, config) {
       preHandler: app.authenticate,
     },
     c.updateMe,
+  );
+  app.post(
+    '/api/v1/users/me/phone/otp',
+    {
+      schema: apiSchema(
+        'Users',
+        'Send a verification code to a mobile number',
+        OtpRequestResponse,
+        { body: PhoneOtpBody },
+      ),
+      preHandler: app.authenticate,
+      config: otpRate,
+    },
+    c.requestPhoneOtp,
+  );
+  app.post(
+    '/api/v1/users/me/phone/verify',
+    {
+      schema: apiSchema('Users', 'Verify ownership of a mobile number', User, {
+        body: PhoneVerifyBody,
+      }),
+      preHandler: app.authenticate,
+      config: otpRate,
+    },
+    c.verifyPhone,
   );
   app.post(
     '/api/v1/users/me/photo',

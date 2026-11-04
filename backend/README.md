@@ -357,6 +357,8 @@ Phase 2 environment settings:
 | OTP_MAX_PER_HOUR | Maximum OTP challenges stored per phone number per hour. |
 | SMS_USERNAME / SMS_API_KEY / SMS_TEMPLATE_ID | Hilite Multimedia DLT SMS credentials. Required in production. Local development skips sending when empty. |
 | SMS_SENDER / SMS_ROUTE | Registered sender and route; defaults `SPAADV` and `ServiceImplicit`. |
+| SMS_BRAND | DLT brand text. Default `Spa Advisor`. Do not change unless the approved template changes. |
+| SMS_OTP_TEMPLATE | Optional DLT template with `{brand}`, `{code}`, and `{minutes}` placeholders. Leave unset to keep the approved Spa Advisor wording. |
 | SESSION_CLEANUP_INTERVAL_MS | Expired-session/consumed-token cleanup interval. |
 | BOOTSTRAP_ADMIN_* | One-time bootstrap command input only; do not set for normal API runtime. |
 

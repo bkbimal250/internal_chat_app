@@ -20,8 +20,12 @@ check "api live" compose exec -T api node -e \
   "fetch('http://127.0.0.1:3001/health/live',{signal:AbortSignal.timeout(4000)}).then(async r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 check "api ready" compose exec -T api node -e \
   "fetch('http://127.0.0.1:3001/health/ready',{signal:AbortSignal.timeout(4000)}).then(async r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
-check "worker live" compose exec -T retention-worker node -e \
-  "fetch('http://127.0.0.1:3002/health/live',{signal:AbortSignal.timeout(4000)}).then(async r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+if retention_worker_enabled || ! vps_mode; then
+  check "worker live" compose exec -T retention-worker node -e \
+    "fetch('http://127.0.0.1:3002/health/live',{signal:AbortSignal.timeout(4000)}).then(async r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+else
+  echo "ok  worker (not started; RETENTION_WORKER_ENABLED is off)"
+fi
 check "web live" compose exec -T web wget -qO- http://127.0.0.1:8080/healthz >/dev/null
 if vps_mode; then
   echo "ok  postgres (host PostgreSQL; verified via api ready)"

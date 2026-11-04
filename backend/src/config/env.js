@@ -65,6 +65,8 @@ export function loadEnv(source = process.env) {
     smsTemplateId: source.SMS_TEMPLATE_ID ?? '',
     smsSender: source.SMS_SENDER ?? 'SPAADV',
     smsRoute: source.SMS_ROUTE ?? 'ServiceImplicit',
+    smsBrand: source.SMS_BRAND ?? 'Spa Advisor',
+    smsOtpTemplate: source.SMS_OTP_TEMPLATE ?? '',
     groupMemberLimit: integer('GROUP_MEMBER_LIMIT', 1000, 2, 10000),
     wsHeartbeatIntervalMs: integer(
       'WS_HEARTBEAT_INTERVAL_MS',
@@ -126,6 +128,12 @@ export function loadEnv(source = process.env) {
   }
   if (!config.smsSender.trim() || !config.smsRoute.trim()) {
     errors.push('SMS sender and route must not be empty');
+  }
+  if (!config.smsBrand.trim()) {
+    errors.push('SMS_BRAND must not be empty');
+  }
+  if (config.smsOtpTemplate && !config.smsOtpTemplate.includes('{code}')) {
+    errors.push('SMS_OTP_TEMPLATE must include the {code} placeholder');
   }
   if (nodeEnv === 'production') {
     if (!config.smsUsername.trim() || !config.smsApiKey.trim() || !config.smsTemplateId.trim()) {

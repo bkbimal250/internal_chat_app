@@ -64,9 +64,20 @@ compose() {
   docker compose --project-name "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" "${files[@]}" "$@"
 }
 
+retention_worker_enabled() {
+  case "${RETENTION_WORKER_ENABLED:-}" in
+    1|true|TRUE|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 app_services() {
   if vps_mode; then
-    printf '%s\n' api web retention-worker
+    if retention_worker_enabled; then
+      printf '%s\n' api web retention-worker
+    else
+      printf '%s\n' api web
+    fi
   else
     printf '%s\n' api web retention-worker caddy
   fi

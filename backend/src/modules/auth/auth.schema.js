@@ -62,6 +62,7 @@ export function apiSchema(tag, summary, response, extra = {}, authenticated = tr
       409: ErrorResponse,
       429: ErrorResponse,
       500: ErrorResponse,
+      503: ErrorResponse,
     },
     ...extra,
   };

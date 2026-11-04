@@ -15,6 +15,8 @@ export const usersApi = {
   completePhoto: (body) => apiClient.post('/api/v1/users/me/photo/complete', body).then((r) => r.data),
   removePhoto: () => apiClient.delete('/api/v1/users/me/photo').then((r) => r.data),
   photoUrl: (id) => apiClient.get(`/api/v1/users/${id}/photo-url`).then((r) => r.data),
+  requestPhoneOtp: (body) => apiClient.post('/api/v1/users/me/phone/otp', body).then((r) => r.data),
+  verifyPhone: (body) => apiClient.post('/api/v1/users/me/phone/verify', body).then((r) => r.data),
 }
 
 export const conversationsApi = {

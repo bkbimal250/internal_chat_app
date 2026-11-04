@@ -36,6 +36,14 @@ export const PhotoInitResponse = object({
 export const PhotoUrlResponse = object({
   url: T.Union([T.String(), T.Null()]),
 });
+export const PhoneOtpBody = object({
+  phone: Phone,
+});
+export const PhoneVerifyBody = object({
+  phone: Phone,
+  code: T.String({ minLength: 6, maxLength: 6, pattern: '^\\d{6}$' }),
+});
+export { OtpRequestResponse } from '../auth/auth.schema.js';
 export const DirectoryUser = object({
   id: T.String({ format: 'uuid' }),
   employeeCode: T.Union([T.String(), T.Null()]),

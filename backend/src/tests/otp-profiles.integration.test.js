@@ -82,7 +82,11 @@ test(
     assert.equal(employee.temporaryPassword, 'Assigned-Temp-Pass-9!');
     assert.equal(employee.user.phoneE164, '+15551230001');
     assert.equal(employee.user.fullName, 'OTP Employee Full');
-    assert.ok(employee.user.phoneVerifiedAt);
+    assert.equal(employee.user.phoneVerifiedAt, null);
+    await app.database.db
+      .update(users)
+      .set({ phoneVerifiedAt: new Date() })
+      .where(eq(users.id, employee.user.id));
 
     const unknown = await app.inject({
       method: 'POST',

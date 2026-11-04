@@ -72,12 +72,31 @@ jobs:
           cache-to: type=gha,mode=max,scope=web
           provenance: false
 
+  deploy-gate:
+    name: Deploy gate
+    needs: publish
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          FLAG: ${{ vars.DEPLOY_ENABLED }}
+        run: |
+          if [ "$FLAG" = "true" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Automatic production deploy is enabled for this run."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Automatic production deploy is waiting for repository variable DEPLOY_ENABLED=true."
+          fi
+
   deploy:
     name: Deploy to VPS
-    needs: publish
-    # Push to main never deploys. Live deploy requires an explicit workflow_dispatch
-    # after repository variable DEPLOY_ENABLED is set to true.
-    if: ${{ github.event_name == 'workflow_dispatch' && vars.DEPLOY_ENABLED == 'true' }}
+    needs: [publish, deploy-gate]
+    # Push to main deploys only after repository variable DEPLOY_ENABLED=true.
+    # Do not set that variable until VPS GHCR credentials and first-deploy checks are approved.
+    if: ${{ needs.deploy-gate.outputs.enabled == 'true' && vars.DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -92,6 +111,10 @@ jobs:
           fi
           if [ -z "${{ secrets.VPS_HOST }}" ] || [ -z "${{ secrets.VPS_USER }}" ] || [ -z "${{ secrets.VPS_SSH_KEY }}" ]; then
             echo "Set VPS_HOST, VPS_USER and VPS_SSH_KEY before enabling deploy." >&2
+            exit 1
+          fi
+          if [ "${{ secrets.VPS_USER }}" = "root" ]; then
+            echo "VPS_USER must be the deploy user, not root, so GHCR Docker credentials apply." >&2
             exit 1
           fi
       - name: Write SSH key
@@ -128,5 +151,10 @@ jobs:
         run: |
           PORT="${VPS_PORT:-22}"
           DIR="${DEPLOY_DIR:-/opt/company-chat}"
+          REMOTE_USER="$(ssh -i ~/.ssh/deploy_key -p "${PORT}" "${VPS_USER}@${VPS_HOST}" "id -un")"
+          if [ "$REMOTE_USER" = "root" ]; then
+            echo "Refusing to deploy as root. Set VPS_USER to the deploy user." >&2
+            exit 1
+          fi
           ssh -i ~/.ssh/deploy_key -p "${PORT}" "${VPS_USER}@${VPS_HOST}" \
             "chmod +x ${DIR}/deploy/*.sh && cd ${DIR} && ./deploy/deploy.sh ${IMAGE_TAG}"

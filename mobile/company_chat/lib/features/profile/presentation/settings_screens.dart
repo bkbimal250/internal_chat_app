@@ -132,7 +132,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           const SizedBox(height: 12),
           TextField(controller: _email, decoration: const InputDecoration(labelText: 'Email')),
           const SizedBox(height: 12),
-          TextField(controller: _phone, decoration: const InputDecoration(labelText: 'Phone')),
+          TextField(
+            controller: _phone,
+            readOnly: true,
+            decoration: const InputDecoration(
+              labelText: 'Phone',
+              helperText: 'Verify a mobile number from Account Settings on the web app',
+            ),
+          ),
           const SizedBox(height: 12),
           TextField(controller: _address, decoration: const InputDecoration(labelText: 'Address')),
           const SizedBox(height: 20),
@@ -145,7 +152,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       'displayName': _display.text.trim(),
                       'fullName': _full.text.trim(),
                       if (_email.text.trim().isNotEmpty) 'email': _email.text.trim(),
-                      if (_phone.text.trim().isNotEmpty) 'phone': _phone.text.trim(),
                       if (_address.text.trim().isNotEmpty) 'address': _address.text.trim(),
                     });
                     await ref.read(authControllerProvider.notifier).refreshProfile();

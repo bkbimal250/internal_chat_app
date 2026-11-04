@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { UserAvatar } from '@/components/common/UserAvatar'
 import { ChangePasswordForm } from '@/features/auth/ChangePasswordForm'
 import { PhotoEditor } from '@/features/users/PhotoEditor'
+import { PhoneVerification } from '@/features/settings/PhoneVerification'
 import { syncUserPhoto } from '@/lib/realtime-events'
 import {
   SettingsFormRow,
@@ -68,7 +69,6 @@ function profileForm(user) {
     displayName: user?.displayName ?? '',
     fullName: user?.fullName ?? user?.displayName ?? '',
     email: user?.email ?? '',
-    phone: user?.phoneE164 ?? '',
     address: user?.address ?? '',
   }
 }
@@ -88,7 +88,6 @@ export function ProfilePane({ user, onBack }) {
         displayName: form.displayName,
         fullName: form.fullName,
         email: form.email || null,
-        phone: form.phone || null,
         address: form.address || null,
       }),
     onSuccess: (updated) => {
@@ -140,15 +139,15 @@ export function ProfilePane({ user, onBack }) {
               data-testid="settings-email"
             />
           </SettingsFormRow>
-          <SettingsFormRow label="Phone">
-            <Input
-              className="h-8"
-              value={form.phone}
-              onChange={(event) => setForm({ ...form, phone: event.target.value })}
-              placeholder="+91…"
-              data-testid="settings-phone"
-            />
-          </SettingsFormRow>
+          <PhoneVerification
+            key={`${user?.id}-${user?.phoneE164 ?? ''}-${user?.phoneVerifiedAt ?? ''}`}
+            user={user}
+            onVerified={(updated) => {
+              queryClient.setQueryData(queryKeys.me, updated)
+              useAuthStore.setState({ user: updated })
+              toast.success('Mobile number verified')
+            }}
+          />
           <SettingsFormRow label="Address">
             <Input
               className="h-8"

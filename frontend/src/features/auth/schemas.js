@@ -14,6 +14,17 @@ export function toE164(countryDial, nationalNumber) {
   return `${countryDial}${digits}`
 }
 
+export function splitE164(phoneE164) {
+  const value = String(phoneE164 || '')
+  const match = COUNTRY_CODES.slice()
+    .sort((a, b) => b.dial.length - a.dial.length)
+    .find((country) => value.startsWith(country.dial))
+  if (!match) {
+    return { countryDial: '+91', nationalNumber: value.replace(/^\+/, '') }
+  }
+  return { countryDial: match.dial, nationalNumber: value.slice(match.dial.length) }
+}
+
 export const loginSchema = z.object({
   username: z
     .string()

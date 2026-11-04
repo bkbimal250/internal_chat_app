@@ -1,14 +1,17 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { users } from '../../database/schema/index.js';
 import { AppError } from '../../utils/app-error.js';
-import { normalizePhone } from '../../services/phone.js';
 import { profilePhotoService } from '../../services/profile-photo.service.js';
 import { directory } from './users.repository.js';
 
 function phonePatch(value) {
   if (value === undefined) return {};
   if (value === null || value === '') return { phoneE164: null, phoneVerifiedAt: null };
-  return { phoneE164: normalizePhone(value), phoneVerifiedAt: new Date() };
+  throw new AppError(
+    'Verify the mobile number with an OTP before it can be saved',
+    400,
+    'PHONE_VERIFICATION_REQUIRED',
+  );
 }
 
 export function usersService(app, config) {

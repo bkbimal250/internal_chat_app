@@ -24,6 +24,12 @@ done
 
 require_image_tag "$TAG"
 
+if [[ "$(id -u)" -eq 0 ]]; then
+  echo "Refusing to deploy as root. Use the deploy user so Docker uses that user's GHCR credentials in ~/.docker/config.json." >&2
+  exit 1
+fi
+echo "Deploying as $(id -un); Docker config ${DOCKER_CONFIG:-$HOME/.docker}"
+
 if [[ "${ENV_FILE}" == *".example" ]]; then
   echo "Refusing to deploy with the example environment file. Copy it to .env.production first." >&2
   exit 1
@@ -52,15 +58,15 @@ fi
 echo "Backing up PostgreSQL before changing application images"
 "$ROOT_DIR/deploy/backup.sh"
 
-echo "Pulling ${API_IMAGE} and ${WEB_IMAGE}"
-compose pull api web retention-worker
+mapfile -t services < <(app_services)
+echo "Pulling ${API_IMAGE} and ${WEB_IMAGE} for ${services[*]}"
+compose pull "${services[@]}"
 
 if [[ "$SKIP_MIGRATE" -eq 0 ]]; then
   echo "Applying forward-only migrations"
   compose --profile migrate run --rm --no-deps migrate
 fi
 
-mapfile -t services < <(app_services)
 echo "Recreating application services only: ${services[*]}"
 if vps_mode; then
   echo "Host Nginx and host PostgreSQL are not managed by Compose"

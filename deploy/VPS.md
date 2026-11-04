@@ -11,7 +11,8 @@ Host PostgreSQL: company_chat / company_chat_user
 ```
 
 **Do not deploy until you approve the Nginx files and environment edits.**
-`DEPLOY_ENABLED` stays unset. A push to `main` never deploys.
+`DEPLOY_ENABLED` stays unset until you explicitly enable automatic deploys.
+SSH and `docker login ghcr.io` must run as the `deploy` user, never as root.
 
 ## 1. Files on the VPS
 

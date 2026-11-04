@@ -13,7 +13,7 @@ Status key:
 
 ## Executive summary
 
-GitHub can build and test images. The VPS Compose file uses `image:` only. Application credentials stay on the VPS. A push to `main` never deploys. Live deploy requires both `DEPLOY_ENABLED=true` and an explicit CD `workflow_dispatch`.
+GitHub can build and test images. The VPS Compose file uses `image:` only. Application credentials stay on the VPS. A push to `main` publishes images and deploys only when `DEPLOY_ENABLED=true`. Leave that variable unset until the `deploy` user GHCR login is verified.
 
 Do not start a live deploy until the blockers below are resolved and you explicitly authorize it.
 

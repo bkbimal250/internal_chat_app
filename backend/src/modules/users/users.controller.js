@@ -1,10 +1,12 @@
 import { publicUser } from '../auth/auth.repository.js';
+import { otpService } from '../otp/otp.service.js';
 import { usersService } from './users.service.js';
 import { profilePhotoService } from '../../services/profile-photo.service.js';
 
 export function usersController(app, config) {
   const service = usersService(app, config);
   const photos = profilePhotoService(app, config);
+  const otp = otpService(app, config);
   const present = async (user) =>
     publicUser({
       ...user,
@@ -30,6 +32,9 @@ export function usersController(app, config) {
   return {
     me: (req) => present(req.auth.user),
     updateMe: async (req) => present(await service.updateMe(req.auth.userId, req.body)),
+    requestPhoneOtp: (req) => otp.enrollRequest(req.auth.userId, req.body.phone),
+    verifyPhone: async (req) =>
+      present(await otp.enrollVerify(req.auth.userId, req.body.phone, req.body.code)),
     directory,
     public: async (req) => {
       const full = await present(await service.public(req.params.id));

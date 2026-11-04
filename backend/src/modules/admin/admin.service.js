@@ -10,7 +10,7 @@ import { activeAdminCount, auditPage, employeePage } from './admin.repository.js
 function phonePatch(value) {
   if (value === undefined) return {};
   if (value === null || value === '') return { phoneE164: null, phoneVerifiedAt: null };
-  return { phoneE164: normalizePhone(value), phoneVerifiedAt: new Date() };
+  return { phoneE164: normalizePhone(value), phoneVerifiedAt: null };
 }
 
 export function adminService(app, config) {

@@ -3,7 +3,7 @@ name: internal-chat
 # VPS stack for a host that already runs Nginx (80/443) and PostgreSQL 16.
 # Pulls prebuilt GHCR images only. Never builds source. Never starts Caddy or Postgres.
 #
-# Persistent services: web, api, retention-worker
+# Persistent services: web, api. retention-worker stays off until RETENTION_WORKER_ENABLED=1.
 # One-shot: migrate (profile "migrate")
 #
 # Host Nginx must proxy 127.0.0.1:${WEB_HOST_PORT} and 127.0.0.1:${API_HOST_PORT}.

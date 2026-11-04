@@ -5,6 +5,8 @@ export const otpChallenges = pgTable(
   {
     id: uuid('id').defaultRandom().primaryKey(),
     phoneE164: varchar('phone_e164', { length: 16 }).notNull(),
+    purpose: varchar('purpose', { length: 16 }).notNull().default('login'),
+    userId: uuid('user_id'),
     codeHash: varchar('code_hash', { length: 64 }).notNull(),
     attempts: integer('attempts').notNull().default(0),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
@@ -14,6 +16,7 @@ export const otpChallenges = pgTable(
   },
   (t) => [
     index('otp_challenges_phone_idx').on(t.phoneE164, t.createdAt),
+    index('otp_challenges_purpose_idx').on(t.phoneE164, t.purpose, t.createdAt),
     index('otp_challenges_expires_idx').on(t.expiresAt),
   ],
 );

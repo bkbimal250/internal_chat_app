@@ -140,7 +140,7 @@ A merge to `main` runs CI, publishes:
 - `ghcr.io/bkbimal250/internal_chat_app/api:sha-<full-git-sha>`
 - `ghcr.io/bkbimal250/internal_chat_app/web:sha-<full-git-sha>`
 
-A push to `main` never deploys. After `DEPLOY_ENABLED=true`, start a live deploy only with **Actions → CD → Run workflow**. That job SSHes to the VPS and runs `./deploy/deploy.sh sha-<git-sha>`.
+A push to `main` runs CI and publishes GHCR images. It deploys to the VPS only when the repository variable `DEPLOY_ENABLED` is exactly `true`. Leave that variable unset until the first VPS GHCR login as the `deploy` user is verified. After you set it, later pushes to `main` deploy automatically. `workflow_dispatch` uses the same gate.
 
 That script:
 
@@ -267,6 +267,8 @@ Live deploy is **not** started by this repository work. To authorize later:
 1. Finish VPS bootstrap and DNS
 2. Fill `.env.production` (never commit it)
 3. Confirm GHCR images exist for a `sha-*` tag
-4. Set GitHub environment secrets
-5. Set repository variable `DEPLOY_ENABLED=true`
-6. Say explicitly that production deploy is approved
+4. Set GitHub environment secrets (`VPS_USER` must be `deploy`, not `root`)
+5. On the VPS, as `deploy`, run `docker login ghcr.io` so `~/.docker/config.json` belongs to that user
+6. Confirm `RETENTION_WORKER_ENABLED` stays `0` until retention deletion is approved
+7. Set repository variable `DEPLOY_ENABLED=true`
+8. Say explicitly that production deploy is approved

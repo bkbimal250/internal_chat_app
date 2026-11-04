@@ -39,6 +39,26 @@ function runBash(script, extraEnv = {}) {
   });
 }
 
+test('SSH connection test is dispatch-only and never deploys', () => {
+  const workflow = read('.github/workflows/ssh-connection-test.yml');
+  assert.match(workflow, /^name: MiChat SSH Connection Test$/m);
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.doesNotMatch(workflow, /^\s+push:/m);
+  assert.doesNotMatch(workflow, /^\s+pull_request:/m);
+  assert.match(workflow, /environment: production/);
+  assert.match(workflow, /VPS_USER" != "deploy"/);
+  assert.match(workflow, /StrictHostKeyChecking=yes/);
+  assert.match(workflow, /\bwhoami\b/);
+  assert.match(workflow, /docker info --format/);
+  assert.match(workflow, /test -r \/opt\/company-chat\/\.env\.production/);
+  assert.match(workflow, /test -w \/opt\/company-chat\/backups/);
+  assert.doesNotMatch(workflow, /DEPLOY_ENABLED/);
+  assert.doesNotMatch(workflow, /deploy\.sh/);
+  assert.doesNotMatch(workflow, /docker compose/);
+  assert.doesNotMatch(workflow, /docker (build|pull|restart|down|prune)/);
+  assert.doesNotMatch(workflow, /pg_dump|psql|nginx/i);
+});
+
 test('CD refuses unauthorized refs even when DEPLOY_ENABLED is true', () => {
   const workflow = read('.github/workflows/cd.yml');
   assert.match(workflow, /name: Require main branch/);

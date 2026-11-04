@@ -1,0 +1,125 @@
+name: MiChat SSH Connection Test
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: none
+
+jobs:
+  ssh-connection-test:
+    name: Read-only SSH checks
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Require deploy SSH secrets
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          fail=0
+          if [ -z "$VPS_HOST" ]; then
+            echo "FAIL  VPS_HOST is set"
+            fail=1
+          else
+            echo "PASS  VPS_HOST is set"
+          fi
+          if [ -z "$VPS_SSH_KEY" ]; then
+            echo "FAIL  VPS_SSH_KEY is set"
+            fail=1
+          else
+            echo "PASS  VPS_SSH_KEY is set"
+          fi
+          if [ -z "$VPS_SSH_KNOWN_HOSTS" ]; then
+            echo "FAIL  VPS_SSH_KNOWN_HOSTS is set"
+            fail=1
+          else
+            echo "PASS  VPS_SSH_KNOWN_HOSTS is set"
+          fi
+          if [ "$VPS_USER" != "deploy" ]; then
+            echo "FAIL  VPS_USER=deploy"
+            fail=1
+          else
+            echo "PASS  VPS_USER=deploy"
+          fi
+          exit "$fail"
+
+      - name: Configure SSH
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/deploy_key" "$HOME/.ssh/known_hosts"
+
+      - name: Run read-only VPS checks
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh_cmd=(
+            ssh
+            -i "$HOME/.ssh/deploy_key"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o BatchMode=yes
+            -o ConnectTimeout=20
+            -p 22
+            "${VPS_USER}@${VPS_HOST}"
+          )
+
+          set +e
+          "${ssh_cmd[@]}" bash -s <<'REMOTE'
+          fail=0
+
+          if user="$(whoami)" && [ -n "$user" ]; then
+            echo "PASS  whoami ($user)"
+            if [ "$user" != "deploy" ]; then
+              echo "FAIL  remote user is deploy"
+              fail=1
+            fi
+          else
+            echo "FAIL  whoami"
+            fail=1
+          fi
+
+          if version="$(docker info --format '{{.ServerVersion}}')" && [ -n "$version" ]; then
+            echo "PASS  docker info --format ServerVersion ($version)"
+          else
+            echo "FAIL  docker info --format ServerVersion"
+            fail=1
+          fi
+
+          if test -r /opt/company-chat/.env.production; then
+            echo "PASS  test -r /opt/company-chat/.env.production"
+          else
+            echo "FAIL  test -r /opt/company-chat/.env.production"
+            fail=1
+          fi
+
+          if test -w /opt/company-chat/backups; then
+            echo "PASS  test -w /opt/company-chat/backups"
+          else
+            echo "FAIL  test -w /opt/company-chat/backups"
+            fail=1
+          fi
+
+          exit "$fail"
+          REMOTE
+          status=$?
+          set -e
+          if [ "$status" -eq 255 ]; then
+            echo "FAIL  ssh connection"
+            echo "FAIL  whoami"
+            echo "FAIL  docker info --format ServerVersion"
+            echo "FAIL  test -r /opt/company-chat/.env.production"
+            echo "FAIL  test -w /opt/company-chat/backups"
+            exit 1
+          fi
+          exit "$status"

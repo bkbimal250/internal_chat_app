@@ -114,8 +114,8 @@ docker compose --env-file .env.production -f docker-compose.prod.vps.yml --profi
 ./deploy/healthcheck.sh
 ```
 
-`deploy.sh` starts only `api`, `web`, and `retention-worker`. It never starts
-Caddy or PostgreSQL.
+`deploy.sh` starts only `api` and `web` while `RETENTION_WORKER_ENABLED=0`.
+It never starts Caddy, PostgreSQL, Nginx, or the retention worker.
 
 ## 6. React and Flutter origins
 

@@ -81,6 +81,9 @@ export function loadEnv(source = process.env) {
       nodeEnv === 'test' ? 50 : 60000,
       86400000,
     ),
+    retentionWorkerEnabled: ['1', 'true', 'TRUE', 'yes', 'YES'].includes(
+      source.RETENTION_WORKER_ENABLED ?? '',
+    ),
     s3Endpoint: source.S3_ENDPOINT ?? '',
     s3PublicEndpoint: source.S3_PUBLIC_ENDPOINT ?? source.S3_ENDPOINT ?? '',
     s3Region: source.S3_REGION ?? 'us-east-1',

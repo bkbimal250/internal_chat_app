@@ -24,5 +24,5 @@ echo "Rolling back application images to ${TAG}"
 "$ROOT_DIR/deploy/deploy.sh" "$TAG" --skip-migrate --no-rollback
 echo "Rollback restored ${TAG}. Database schema was not reverted."
 if [[ "$FROM_FAILURE" -eq 1 ]]; then
-  exit 1
+  echo "Previous images restored after a failed deploy. Schema was not reverted."
 fi

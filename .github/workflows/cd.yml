@@ -18,7 +18,29 @@ env:
   VITE_API_BASE_URL: https://api.michat.in
 
 jobs:
+  main-ref-guard:
+    name: Require main branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject unauthorized refs
+        env:
+          REF: ${{ github.ref }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          echo "ref=${REF} event=${EVENT}"
+          if [ "$EVENT" = "pull_request" ] || [ -n "$HEAD_REF" ]; then
+            echo "Production CD cannot run from a pull request." >&2
+            exit 1
+          fi
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "Production CD is limited to the main branch (got ${REF})." >&2
+            exit 1
+          fi
+
   ci:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: main-ref-guard
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
@@ -27,6 +49,7 @@ jobs:
 
   publish:
     name: Publish GHCR images
+    if: ${{ github.ref == 'refs/heads/main' }}
     needs: ci
     runs-on: ubuntu-latest
     permissions:
@@ -74,6 +97,7 @@ jobs:
 
   deploy-gate:
     name: Deploy gate
+    if: ${{ github.ref == 'refs/heads/main' }}
     needs: publish
     runs-on: ubuntu-latest
     outputs:
@@ -94,9 +118,8 @@ jobs:
   deploy:
     name: Deploy to VPS
     needs: [publish, deploy-gate]
-    # Push to main deploys only after repository variable DEPLOY_ENABLED=true.
-    # Do not set that variable until VPS GHCR credentials and first-deploy checks are approved.
-    if: ${{ needs.deploy-gate.outputs.enabled == 'true' && vars.DEPLOY_ENABLED == 'true' }}
+    # Production deploy is limited to main. DEPLOY_ENABLED must stay unset until approved.
+    if: ${{ github.ref == 'refs/heads/main' && needs.deploy-gate.outputs.enabled == 'true' && vars.DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -113,8 +136,8 @@ jobs:
             echo "Set VPS_HOST, VPS_USER and VPS_SSH_KEY before enabling deploy." >&2
             exit 1
           fi
-          if [ "${{ secrets.VPS_USER }}" = "root" ]; then
-            echo "VPS_USER must be the deploy user, not root, so GHCR Docker credentials apply." >&2
+          if [ "${{ secrets.VPS_USER }}" != "deploy" ]; then
+            echo "VPS_USER must be deploy, not root or another account, so GHCR Docker credentials apply." >&2
             exit 1
           fi
       - name: Write SSH key
@@ -152,8 +175,8 @@ jobs:
           PORT="${VPS_PORT:-22}"
           DIR="${DEPLOY_DIR:-/opt/company-chat}"
           REMOTE_USER="$(ssh -i ~/.ssh/deploy_key -p "${PORT}" "${VPS_USER}@${VPS_HOST}" "id -un")"
-          if [ "$REMOTE_USER" = "root" ]; then
-            echo "Refusing to deploy as root. Set VPS_USER to the deploy user." >&2
+          if [ "$REMOTE_USER" != "deploy" ] || [ "$VPS_USER" != "deploy" ]; then
+            echo "Refusing to deploy as ${REMOTE_USER}. Set VPS_USER to deploy so GHCR credentials in that user's Docker config apply." >&2
             exit 1
           fi
           ssh -i ~/.ssh/deploy_key -p "${PORT}" "${VPS_USER}@${VPS_HOST}" \

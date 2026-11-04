@@ -25,6 +25,11 @@ if vps_mode; then
 else
   compose exec -T postgres pg_dump "${dump_args[@]}" > "$dump"
 fi
+if [[ ! -s "$dump" ]]; then
+  echo "PostgreSQL backup produced an empty dump; refusing to continue." >&2
+  rm -f "$dump"
+  exit 1
+fi
 chmod 600 "$dump"
 
 mapfile -t old < <(ls -1t backups/postgres-*.dump 2>/dev/null | tail -n +15 || true)

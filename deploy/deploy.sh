@@ -4,6 +4,7 @@ set -euo pipefail
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 load_env
+require_deploy_safety
 
 TAG="${1:-}"
 SKIP_MIGRATE=0
@@ -23,12 +24,7 @@ for arg in "$@"; do
 done
 
 require_image_tag "$TAG"
-
-if [[ "$(id -u)" -eq 0 ]]; then
-  echo "Refusing to deploy as root. Use the deploy user so Docker uses that user's GHCR credentials in ~/.docker/config.json." >&2
-  exit 1
-fi
-echo "Deploying as $(id -un); Docker config ${DOCKER_CONFIG:-$HOME/.docker}"
+require_deploy_user
 
 if [[ "${ENV_FILE}" == *".example" ]]; then
   echo "Refusing to deploy with the example environment file. Copy it to .env.production first." >&2
@@ -50,6 +46,7 @@ upsert_env API_IMAGE "$API_IMAGE"
 upsert_env WEB_IMAGE "$WEB_IMAGE"
 upsert_env IMAGE_TAG "$IMAGE_TAG"
 load_env
+require_deploy_safety
 
 if [[ -n "${GHCR_TOKEN:-}" ]]; then
   printf '%s\n' "$GHCR_TOKEN" | docker login ghcr.io -u "${GHCR_USERNAME:-github}" --password-stdin
@@ -59,6 +56,7 @@ echo "Backing up PostgreSQL before changing application images"
 "$ROOT_DIR/deploy/backup.sh"
 
 mapfile -t services < <(app_services)
+require_deploy_safety
 echo "Pulling ${API_IMAGE} and ${WEB_IMAGE} for ${services[*]}"
 compose pull "${services[@]}"
 
@@ -68,15 +66,15 @@ if [[ "$SKIP_MIGRATE" -eq 0 ]]; then
 fi
 
 echo "Recreating application services only: ${services[*]}"
-if vps_mode; then
-  echo "Host Nginx and host PostgreSQL are not managed by Compose"
-fi
+echo "Host Nginx and host PostgreSQL are not managed by Compose"
 compose up -d --no-deps --no-build --pull never "${services[@]}"
 
 if ! "$ROOT_DIR/deploy/healthcheck.sh"; then
   echo "Deployment health checks failed; restoring ${previous:-previous images}" >&2
   if [[ "$NO_ROLLBACK" -eq 0 && -n "${previous}" && "${previous}" != "${TAG}" ]]; then
-    "$ROOT_DIR/deploy/rollback.sh" --from-failure || true
+    if ! "$ROOT_DIR/deploy/rollback.sh"; then
+      echo "Rollback failed; application images may still be ${TAG}" >&2
+    fi
   fi
   exit 1
 fi

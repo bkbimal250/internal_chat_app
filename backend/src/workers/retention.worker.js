@@ -23,6 +23,15 @@ function isDirectRun() {
 
 export async function runRetentionWorker({ config = loadEnv(), once = false } = {}) {
   const log = pino(loggerOptions(config));
+  if (!config.retentionWorkerEnabled) {
+    log.warn('Retention worker not started; RETENTION_WORKER_ENABLED is off');
+    if (once) return { skipped: 'disabled' };
+    await new Promise((resolve) => {
+      process.once('SIGTERM', resolve);
+      process.once('SIGINT', resolve);
+    });
+    return { skipped: 'disabled' };
+  }
   const database = createDatabase(config, log);
   const storage = objectStorage(config, log);
   const app = {

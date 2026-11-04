@@ -73,6 +73,7 @@ services:
     networks: [app]
 
   retention-worker:
+    profiles: [retention]
     image: ${API_IMAGE:?API_IMAGE is required}
     <<: [*app-security, *host-gateway]
     command: ["node", "src/workers/retention.worker.js"]

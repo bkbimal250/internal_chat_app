@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:company_chat/app/providers.dart';
+import 'package:company_chat/core/config/feature_flags.dart';
 import 'package:company_chat/core/network/api_error.dart';
 import 'package:company_chat/core/network/public_url.dart';
 import 'package:company_chat/core/notifications/notification_prefs.dart';
@@ -97,6 +98,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         .map((member) => member['role'] as String?)
         .firstOrNull;
     final canSend = !isGroup || settings['sendMessages'] != 'admins' || myRole == 'owner' || myRole == 'admin';
+    final attachmentsEnabled = ref.watch(featureFlagsProvider.select((s) => s.chatAttachmentsEnabled));
     final peer = conversation == null ? null : ref.read(conversationsControllerProvider.notifier).peer(conversation);
     final online = ref.watch(onlineUsersProvider);
 
@@ -288,14 +290,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
                 child: Row(
                   children: [
-                    IconButton(
-                      onPressed: state.uploading || _recording ? null : () => _attach(controller),
-                      icon: const Icon(Icons.attach_file, color: AppColors.gold),
-                    ),
-                    IconButton(
-                      onPressed: state.uploading ? null : () => _toggleVoice(controller),
-                      icon: Icon(_recording ? Icons.stop_circle_outlined : Icons.mic_none, color: AppColors.gold),
-                    ),
+                    if (attachmentsEnabled)
+                      IconButton(
+                        onPressed: state.uploading || _recording ? null : () => _attach(controller),
+                        icon: const Icon(Icons.attach_file, color: AppColors.gold),
+                      ),
+                    if (attachmentsEnabled)
+                      IconButton(
+                        onPressed: state.uploading ? null : () => _toggleVoice(controller),
+                        icon: Icon(_recording ? Icons.stop_circle_outlined : Icons.mic_none, color: AppColors.gold),
+                      ),
                     Expanded(
                       child: _recording
                           ? Container(
@@ -365,6 +369,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _toggleVoice(MessagesController controller) async {
+    if (!ref.read(featureFlagsProvider).chatAttachmentsEnabled) return;
     try {
       if (_recording) {
         final path = await _recorder.stop();
@@ -411,6 +416,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _attach(MessagesController controller) async {
+    if (!ref.read(featureFlagsProvider).chatAttachmentsEnabled) return;
     final choice = await showAttachSheet(context);
     if (choice == null) return;
     final quality = choice.quality;

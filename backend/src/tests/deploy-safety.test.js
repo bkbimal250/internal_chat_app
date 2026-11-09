@@ -198,6 +198,11 @@ test('deploy.sh validates VPS safety after load_env and backups before migrate',
   assert.match(lib, /atomic_write/);
   assert.match(lib, /HEALTH_ATTEMPTS/);
   assert.match(vpsEnv, /RETENTION_WORKER_ENABLED=0/);
+  assert.match(vpsEnv, /CHAT_ATTACHMENTS_ENABLED=false/);
+  assert.match(vpsEnv, /CALLS_ENABLED=false/);
+  assert.match(vpsEnv, /S3_BUCKET=michat-main-bucket/);
+  assert.match(vpsEnv, /S3_REGION=ap-south-1/);
+  assert.match(vpsEnv, /S3_CREATE_BUCKET=0/);
   assert.match(vpsEnv, /DEPLOY_TARGET=vps/);
   assert.match(vpsEnv, /COMPOSE_FILE=docker-compose\.prod\.vps\.yml/);
   assert.match(vpsEnv, /COMPOSE_PROJECT_NAME=internal-chat/);

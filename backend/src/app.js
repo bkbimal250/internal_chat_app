@@ -81,7 +81,13 @@ export async function buildApp({ config = loadEnv() } = {}) {
       try {
         await database.check();
         const storage = await app.storage.ready();
-        const payload = { status: 'ready', database: 'connected', storage };
+        const payload = {
+          status: 'ready',
+          database: 'connected',
+          storage,
+          attachmentsEnabled: Boolean(config.chatAttachmentsEnabled),
+          callsEnabled: Boolean(config.callsEnabled),
+        };
         if (process.env.GIT_SHA) payload.version = process.env.GIT_SHA;
         return payload;
       } catch {

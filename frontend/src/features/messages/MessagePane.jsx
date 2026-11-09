@@ -34,6 +34,7 @@ import { MessageActions, ReactionChips } from '@/features/messages/MessageAction
 import { formatDateSeparator, formatMessageTime, sameDay } from '@/lib/time'
 import { canAddGroupMembers, canSendGroupMessages, groupSettings, memberRole } from '@/lib/permissions'
 import { useAuth } from '@/hooks/use-auth'
+import { useFeaturesStore } from '@/stores/features-store'
 import { usePresenceStore, useTypingStore, useUiStore } from '@/stores/ui-store'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -202,6 +203,7 @@ function MessageBubble({
 
 function Composer({ conversationId, apiRef, canSend = true }) {
   const { user } = useAuth()
+  const attachmentsEnabled = useFeaturesStore((state) => state.attachmentsEnabled)
   const queryClient = useQueryClient()
   const replyTo = useUiStore((state) => state.replyTo)
   const setReplyTo = useUiStore((state) => state.setReplyTo)
@@ -317,7 +319,7 @@ function Composer({ conversationId, apiRef, canSend = true }) {
   }
 
   async function startUpload(file, previous) {
-    if (!canSend) return
+    if (!canSend || !attachmentsEnabled) return
     const resume = typeof previous === 'object' && previous ? previous : uploads.find((item) => item.id === previous)
     if (!file) {
       resumePickerRef.current = resume
@@ -405,6 +407,7 @@ function Composer({ conversationId, apiRef, canSend = true }) {
   }, [recording])
 
   async function toggleVoice() {
+    if (!attachmentsEnabled) return
     if (recording) {
       const session = voiceRef.current
       voiceRef.current = null
@@ -485,6 +488,7 @@ function Composer({ conversationId, apiRef, canSend = true }) {
           send()
         }}
       >
+        {attachmentsEnabled ? (
         <input
           ref={fileRef}
           type="file"
@@ -499,6 +503,7 @@ function Composer({ conversationId, apiRef, canSend = true }) {
             if (file) startUpload(file, resume)
           }}
         />
+        ) : null}
         {recording ? (
           <div className="flex min-w-0 flex-1 items-center gap-2 rounded-[28px] border bg-card px-3 py-2 shadow-xs">
             <span className="size-2.5 animate-pulse rounded-full bg-destructive" />
@@ -511,7 +516,8 @@ function Composer({ conversationId, apiRef, canSend = true }) {
           </div>
         ) : (
           <div className="flex min-w-0 flex-1 items-end rounded-[28px] border bg-card px-1.5 py-1 shadow-xs">
-            <AttachMenu disabled={!canSend} onPick={startUpload} />
+            {attachmentsEnabled ? <AttachMenu disabled={!canSend} onPick={startUpload} /> : null}
+            {attachmentsEnabled ? (
             <Button
               type="button"
               size="icon"
@@ -523,6 +529,7 @@ function Composer({ conversationId, apiRef, canSend = true }) {
             >
               <Mic />
             </Button>
+            ) : null}
             <Button
               type="button"
               size="icon"

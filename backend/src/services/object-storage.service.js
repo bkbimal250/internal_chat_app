@@ -25,21 +25,45 @@ export function createStorageKey() {
   return `att/${stamp}/${randomBytes(32).toString('hex')}`;
 }
 
-export function objectStorage(config, logger) {
-  const enabled = Boolean(config.s3Endpoint && config.s3AccessKey && config.s3SecretKey);
-  const shared = {
-    region: config.s3Region,
-    forcePathStyle: config.s3ForcePathStyle,
-    credentials: enabled
-      ? { accessKeyId: config.s3AccessKey, secretAccessKey: config.s3SecretKey }
-      : undefined,
+export function s3ClientSettings(config) {
+  const endpoint = String(config.s3Endpoint || '').trim() || undefined;
+  const publicEndpoint = String(config.s3PublicEndpoint || '').trim() || endpoint;
+  return {
+    enabled: Boolean(String(config.s3AccessKey || '').trim() && String(config.s3SecretKey || '').trim()),
+    region: config.s3Region || 'us-east-1',
+    forcePathStyle: config.s3ForcePathStyle === true,
+    endpoint,
+    publicEndpoint,
   };
-  const internal = enabled
-    ? new S3Client({ ...shared, endpoint: config.s3Endpoint })
-    : null;
-  const publicClient = enabled
-    ? new S3Client({ ...shared, endpoint: config.s3PublicEndpoint || config.s3Endpoint })
-    : null;
+}
+
+export function createS3ClientOptions(config, { publicEndpoint = false } = {}) {
+  const settings = s3ClientSettings(config);
+  const options = {
+    region: settings.region,
+    forcePathStyle: settings.forcePathStyle,
+  };
+  if (settings.enabled) {
+    options.credentials = {
+      accessKeyId: config.s3AccessKey,
+      secretAccessKey: config.s3SecretKey,
+    };
+  }
+  const endpoint = publicEndpoint ? settings.publicEndpoint : settings.endpoint;
+  if (endpoint) options.endpoint = endpoint;
+  return options;
+}
+
+export function manageBucketOnStartup(config) {
+  return config.s3CreateBucket === true;
+}
+
+export function objectStorage(config, logger, { internalClient, publicClient: publicOverride } = {}) {
+  const settings = s3ClientSettings(config);
+  const enabled = settings.enabled;
+  const internal = internalClient ?? (enabled ? new S3Client(createS3ClientOptions(config)) : null);
+  const publicClient =
+    publicOverride ?? (enabled ? new S3Client(createS3ClientOptions(config, { publicEndpoint: true })) : null);
   const bucket = config.s3Bucket;
   const requireEnabled = () => {
     if (!enabled) throw new AppError('File storage is unavailable', 503, 'STORAGE_UNAVAILABLE');
@@ -57,18 +81,21 @@ export function objectStorage(config, logger) {
       }
     },
     async ensureBucket() {
-      if (!enabled) return;
+      if (!enabled) return { status: 'unconfigured' };
       try {
         await internal.send(new HeadBucketCommand({ Bucket: bucket }));
       } catch (error) {
-        if (!config.s3CreateBucket) {
+        if (!manageBucketOnStartup(config)) {
           logger?.warn(
             { err: error, code: 'STORAGE_BUCKET_MISSING' },
             'S3 bucket is missing and S3_CREATE_BUCKET is disabled',
           );
-          return;
+          return { status: 'disconnected' };
         }
         await internal.send(new CreateBucketCommand({ Bucket: bucket }));
+      }
+      if (!manageBucketOnStartup(config)) {
+        return { status: 'connected' };
       }
       const origins = config.corsOrigins.length
         ? config.corsOrigins
@@ -112,6 +139,7 @@ export function objectStorage(config, logger) {
         .catch((error) => {
           logger?.warn({ err: error, code: 'STORAGE_LIFECYCLE_FAILED' }, 'Unable to apply S3 lifecycle rules');
         });
+      return { status: 'connected' };
     },
     async presignUpload(key, mimeType, expiresIn) {
       requireEnabled();

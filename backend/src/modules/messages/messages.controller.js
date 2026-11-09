@@ -1,9 +1,9 @@
 import { messagesService } from './messages.service.js';
 import { attachmentsService } from '../attachments/attachments.service.js';
 import { notifyNewMessage } from '../notify/message-notify.js';
-export const messagesController = (app) => {
+export const messagesController = (app, config) => {
   const s = messagesService(app);
-  const files = attachmentsService(app);
+  const files = attachmentsService(app, config);
   const emit = async (kind, m, userId) => {
     const presented = await s.present(m, userId);
     await app.broadcaster.conversation(presented.conversationId, kind, presented);

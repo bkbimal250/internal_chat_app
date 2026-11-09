@@ -3,6 +3,7 @@ import { apiClient, isSessionInvalid, refreshAccessToken } from '@/services/api-
 import { applyTokens, clearTokens, getCsrfToken, subscribeSession } from '@/services/session-tokens'
 import { getDeviceName } from '@/lib/utils'
 import { useUiStore } from '@/stores/ui-store'
+import { useFeaturesStore } from '@/stores/features-store'
 
 const emptySession = {
   user: null,
@@ -34,6 +35,7 @@ export const useAuthStore = create((set, get) => ({
       deviceId: payload.deviceId ?? get().deviceId,
       expiresAt: Date.now() + (payload.expiresIn ?? 900) * 1000,
     })
+    useFeaturesStore.getState().load()
   },
 
   reset() {
@@ -42,6 +44,7 @@ export const useAuthStore = create((set, get) => ({
     clearTokens()
     set({ status: 'unauthenticated', ...emptySession })
     useUiStore.getState().resetWorkspace()
+    useFeaturesStore.getState().reset()
   },
 
   async restoreSession() {

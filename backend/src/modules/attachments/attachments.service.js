@@ -100,6 +100,13 @@ export function attachmentsService(app, config) {
     return { message, duplicate: false };
   }
 
+  function assertWritable() {
+    if (!config?.chatAttachmentsEnabled) {
+      throw new AppError('Chat attachments are not enabled', 503, 'ATTACHMENTS_DISABLED');
+    }
+    if (!storage.enabled) throw new AppError('File storage is unavailable', 503, 'STORAGE_UNAVAILABLE');
+  }
+
   return {
     publicAttachment,
     async hydrate(message) {
@@ -121,6 +128,7 @@ export function attachmentsService(app, config) {
       return rows.map((row) => ({ ...row, attachment: publicAttachment(byMessage.get(row.id)) }));
     },
     async init(conversationId, userId, input) {
+      assertWritable();
       const { conversation, member } = await conversationsService.assertMember(conversationId, userId);
       assertGroupSend(conversation, member.role);
       const spec = assertDeclaredType(input.mimeType, input.sizeBytes);
@@ -133,7 +141,6 @@ export function attachmentsService(app, config) {
         .from(attachments)
         .where(and(eq(attachments.uploaderId, userId), eq(attachments.status, 'pending')));
       if (pending >= 20) throw new AppError('Too many unfinished uploads', 429, 'QUOTA_EXCEEDED');
-      if (!storage.enabled) throw new AppError('File storage is unavailable', 503, 'STORAGE_UNAVAILABLE');
       const storageKey = createStorageKey();
       const uploadExpiresAt = new Date(Date.now() + config.attachmentPendingTtlMs);
       const plan = planUpload(input.sizeBytes, input.strategy);
@@ -183,6 +190,7 @@ export function attachmentsService(app, config) {
       return existing;
     },
     async signParts(id, userId, input) {
+      assertWritable();
       const existing = await this.requirePendingUploader(id, userId);
       if (!existing.multipartUploadId) throw new AppError('Upload is not multipart', 409, 'CONFLICT');
       const plan = planUpload(existing.sizeBytes, 'multipart');
@@ -206,6 +214,7 @@ export function attachmentsService(app, config) {
       return { id: existing.id, partSize: plan.partSize, partCount: plan.partCount, parts };
     },
     async listUploadedParts(id, userId) {
+      assertWritable();
       const existing = await this.requirePendingUploader(id, userId);
       if (!existing.multipartUploadId) {
         return { id: existing.id, mode: 'single', parts: [], partSize: existing.sizeBytes, partCount: 1 };
@@ -222,6 +231,7 @@ export function attachmentsService(app, config) {
       };
     },
     async finalize(id, userId, input) {
+      assertWritable();
       const [current] = await db.select().from(attachments).where(eq(attachments.id, id));
       if (!current || current.uploaderId !== userId) throw new AppError('Attachment not found', 404, 'NOT_FOUND');
       await conversationsService.assertMember(current.conversationId, userId);
@@ -393,6 +403,7 @@ export function attachmentsService(app, config) {
       };
     },
     async destroy(id, userId) {
+      assertWritable();
       const [row] = await db.select().from(attachments).where(eq(attachments.id, id));
       if (!row) throw new AppError('Attachment not found', 404, 'NOT_FOUND');
       if (row.status === 'available') return this.remove(id, userId);
@@ -400,6 +411,7 @@ export function attachmentsService(app, config) {
       return null;
     },
     async cancel(id, userId) {
+      assertWritable();
       const [row] = await db.select().from(attachments).where(eq(attachments.id, id));
       if (!row || row.uploaderId !== userId) throw new AppError('Attachment not found', 404, 'NOT_FOUND');
       if (row.status === 'available') throw new AppError('Available files cannot be cancelled', 409, 'CONFLICT');
@@ -415,6 +427,7 @@ export function attachmentsService(app, config) {
       return { success: true };
     },
     async remove(id, userId) {
+      assertWritable();
       const [row] = await db.select().from(attachments).where(eq(attachments.id, id));
       if (!row || row.status !== 'available') throw new AppError('Attachment not found', 404, 'NOT_FOUND');
       if (row.uploaderId !== userId) throw new AppError('Attachment not found', 404, 'NOT_FOUND');
@@ -444,6 +457,7 @@ export function attachmentsService(app, config) {
       });
     },
     async forward(sourceMessageId, userId, input) {
+      assertWritable();
       const [source] = await db.select().from(messages).where(eq(messages.id, sourceMessageId));
       if (!source || source.deletedAt) throw new AppError('Message not found', 404, 'NOT_FOUND');
       await conversationsService.assertMember(source.conversationId, userId);

@@ -42,4 +42,21 @@ describe('responsive navigation', () => {
     expect(screen.getAllByRole('button', { name: 'Settings' }).length).toBeGreaterThan(0)
     expect(screen.getAllByRole('button', { name: 'Admin' }).length).toBeGreaterThan(0)
   })
+
+  it('renders a profile cluster and notification control in the rail', () => {
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <TooltipProvider>
+          <MemoryRouter>
+            <ChatLayout />
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    )
+    expect(screen.getAllByTestId('workspace-profile').length).toBeGreaterThan(0)
+    expect(screen.getAllByTestId('notification-bell').length).toBeGreaterThan(0)
+    expect(screen.getAllByTestId('workspace-profile-button').length).toBeGreaterThan(0)
+    expect(screen.getAllByTestId('sign-out').length).toBeGreaterThan(0)
+    expect(screen.getAllByTestId('realtime-status')[0]).toHaveTextContent('Realtime connected')
+  })
 })

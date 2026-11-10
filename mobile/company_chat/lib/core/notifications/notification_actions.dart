@@ -1,4 +1,5 @@
 import 'package:company_chat/core/network/api_client.dart';
+import 'package:company_chat/core/notifications/pending_call.dart';
 import 'package:company_chat/core/notifications/pending_route.dart';
 import 'package:company_chat/core/storage/session_store.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -7,6 +8,19 @@ import 'package:uuid/uuid.dart';
 class NotificationActions {
   static Future<void> fromResponse(NotificationResponse response) async {
     final payload = decodePayload(response.payload);
+    final callId = payload['callId'];
+    if (callId != null && callId.isNotEmpty) {
+      final action = response.actionId ?? payload['action'] ?? 'open';
+      pendingCallRoute.open(
+        callId,
+        callAction: action == 'accept_call' || action == 'accept'
+            ? 'accept'
+            : action == 'reject_call' || action == 'reject'
+                ? 'reject'
+                : 'open',
+      );
+      return;
+    }
     final conversationId = payload['conversationId'];
     if (conversationId == null || conversationId.isEmpty) return;
     final action = response.actionId ?? payload['action'] ?? 'open';

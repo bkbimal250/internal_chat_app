@@ -11,6 +11,7 @@ import 'package:company_chat/core/utils/preview_text.dart';
 import 'package:company_chat/core/utils/time_format.dart';
 import 'package:company_chat/core/widgets/user_avatar.dart';
 import 'package:company_chat/features/auth/presentation/auth_controller.dart';
+import 'package:company_chat/features/calls/call_providers.dart';
 import 'package:company_chat/features/conversations/presentation/conversations_controller.dart';
 import 'package:company_chat/features/media/media_download.dart';
 import 'package:company_chat/features/media/media_limits.dart';
@@ -99,6 +100,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         .firstOrNull;
     final canSend = !isGroup || settings['sendMessages'] != 'admins' || myRole == 'owner' || myRole == 'admin';
     final attachmentsEnabled = ref.watch(featureFlagsProvider.select((s) => s.chatAttachmentsEnabled));
+    final callingEnabled = ref.watch(callControllerProvider.select((s) => s.capabilities.enabled));
     final peer = conversation == null ? null : ref.read(conversationsControllerProvider.notifier).peer(conversation);
     final online = ref.watch(onlineUsersProvider);
 
@@ -142,6 +144,25 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             ],
           ),
           actions: [
+            if (!isGroup && callingEnabled && peer != null)
+              IconButton(
+                tooltip: 'Voice call',
+                onPressed: () async {
+                  try {
+                    await ref.read(callControllerProvider.notifier).startCall(
+                          userId: peer['id'] as String,
+                          name: title,
+                          hasPhoto: peer['hasProfilePhoto'] == true,
+                          photoVersion: peer['photoVersion']?.toString(),
+                        );
+                  } catch (error) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+                    }
+                  }
+                },
+                icon: const Icon(Icons.call_outlined),
+              ),
             if (isGroup)
               IconButton(
                 onPressed: () => context.push('/groups/${widget.conversationId}/info'),

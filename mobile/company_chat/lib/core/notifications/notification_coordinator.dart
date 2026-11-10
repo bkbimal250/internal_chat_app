@@ -48,6 +48,13 @@ class _NotificationHostState extends ConsumerState<NotificationHost> {
 
   void _fromPush(Map<String, String> data) {
     final type = data['type'] ?? '';
+    if (type == 'incoming_call') {
+      final callId = data['callId'] ?? '';
+      if (callId.isNotEmpty) {
+        PushNotifications.onIncomingCall?.call(callId);
+      }
+      return;
+    }
     if (type.startsWith('retention')) {
       _present(
         InAppNotice(

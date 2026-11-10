@@ -7,18 +7,19 @@ import 'package:company_chat/core/utils/device_info.dart';
 import 'package:dio/dio.dart';
 
 class ApiClient {
-  ApiClient(this.store)
-      : dio = Dio(
-          BaseOptions(
-            baseUrl: AppConfig.apiBaseUrl,
-            headers: {
-              'Accept': 'application/json',
-              'X-Requested-With': AppConfig.requestedWith,
-            },
-            connectTimeout: const Duration(seconds: 15),
-            receiveTimeout: const Duration(seconds: 20),
-          ),
-        ) {
+  ApiClient(this.store, {Dio? client})
+      : dio = client ??
+            Dio(
+              BaseOptions(
+                baseUrl: AppConfig.apiBaseUrl,
+                headers: {
+                  'Accept': 'application/json',
+                  'X-Requested-With': AppConfig.requestedWith,
+                },
+                connectTimeout: const Duration(seconds: 15),
+                receiveTimeout: const Duration(seconds: 20),
+              ),
+            ) {
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {

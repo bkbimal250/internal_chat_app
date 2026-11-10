@@ -17,7 +17,10 @@ final databaseProvider = Provider<AppDatabase>((ref) {
 });
 
 final chatSocketProvider = Provider<ChatSocket>((ref) {
-  final socket = ChatSocket(ref.watch(sessionStoreProvider));
+  final socket = ChatSocket(
+    ref.watch(sessionStoreProvider),
+    refreshSession: () => ref.read(apiClientProvider).refresh(),
+  );
   ref.onDispose(socket.disconnect);
   return socket;
 });

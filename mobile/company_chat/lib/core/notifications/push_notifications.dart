@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:company_chat/core/network/api_client.dart';
 import 'package:company_chat/core/notifications/notification_actions.dart';
+import 'package:company_chat/core/notifications/pending_call.dart';
 import 'package:company_chat/core/notifications/pending_route.dart';
 import 'package:company_chat/firebase_options.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -12,8 +13,10 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 const messagesChannelId = 'company_chat_messages';
 const retentionChannelId = 'company_chat_retention';
+const callsChannelId = 'company_chat_calls';
 
 typedef ForegroundNotice = void Function(Map<String, String> data);
+typedef IncomingCallNotice = void Function(String callId);
 
 final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
 final Set<String> _seenMessageIds = <String>{};
@@ -34,6 +37,7 @@ void notificationTapBackground(NotificationResponse response) {
 
 class PushNotifications {
   static ForegroundNotice? onForegroundData;
+  static IncomingCallNotice? onIncomingCall;
   static bool _localReady = false;
 
   static Future<void> initialize() async {
@@ -90,6 +94,13 @@ class PushNotifications {
             DarwinNotificationAction.plain('mark_read', 'Mark as read'),
           ],
         ),
+        DarwinNotificationCategory(
+          'INCOMING_CALL',
+          actions: [
+            DarwinNotificationAction.plain('accept_call', 'Accept', options: {DarwinNotificationActionOption.foreground}),
+            DarwinNotificationAction.plain('reject_call', 'Decline', options: {DarwinNotificationActionOption.destructive}),
+          ],
+        ),
       ],
     );
     await _plugin.initialize(
@@ -114,6 +125,16 @@ class PushNotifications {
         'Retention reminders',
         description: 'Chat retention reminders',
         importance: Importance.defaultImportance,
+      ),
+    );
+    await androidPlugin?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        callsChannelId,
+        'Voice calls',
+        description: 'Incoming MiChat voice calls',
+        importance: Importance.max,
+        playSound: true,
+        enableVibration: true,
       ),
     );
     _localReady = true;
@@ -145,11 +166,58 @@ class PushNotifications {
       data['body'] = message.notification?.body ?? '';
     }
     final type = data['type'] ?? '';
+    if (type == 'incoming_call') {
+      final callId = data['callId'] ?? '';
+      if (callId.isEmpty) return;
+      if (!background) {
+        onIncomingCall?.call(callId);
+        return;
+      }
+      await showIncomingCall(data);
+      return;
+    }
     final messageId = data['messageId'];
     if (messageId != null && messageId.isNotEmpty && !_seenMessageIds.add(messageId)) return;
     if (!background) return;
     if (Platform.isIOS && message.notification != null) return;
     await showLocal(data, type.startsWith('retention') ? retentionChannelId : messagesChannelId);
+  }
+
+  static Future<void> showIncomingCall(Map<String, String> data) async {
+    await ensureLocalPlugin();
+    final callId = data['callId'] ?? '';
+    final title = data['callerName']?.isNotEmpty == true ? data['callerName']! : (data['title'] ?? 'MiChat');
+    await _plugin.show(
+      callId.hashCode & 0x7fffffff,
+      title,
+      'Incoming voice call',
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          callsChannelId,
+          'Voice calls',
+          channelDescription: 'Incoming MiChat voice calls',
+          importance: Importance.max,
+          priority: Priority.max,
+          category: AndroidNotificationCategory.call,
+          fullScreenIntent: true,
+          visibility: NotificationVisibility.public,
+          actions: const <AndroidNotificationAction>[
+            AndroidNotificationAction('accept_call', 'Accept'),
+            AndroidNotificationAction('reject_call', 'Decline'),
+          ],
+        ),
+        iOS: const DarwinNotificationDetails(
+          categoryIdentifier: 'INCOMING_CALL',
+          presentAlert: true,
+          presentSound: true,
+          interruptionLevel: InterruptionLevel.timeSensitive,
+        ),
+      ),
+      payload: NotificationActions.encodePayload({
+        'callId': callId,
+        'action': 'open_call',
+      }),
+    );
   }
 
   static Future<void> showLocal(Map<String, String> data, String channelId) async {
@@ -212,6 +280,11 @@ class PushNotifications {
   }
 
   static void _openRemote(RemoteMessage message) {
+    final type = message.data['type']?.toString();
+    if (type == 'incoming_call') {
+      pendingCallRoute.open(message.data['callId']?.toString());
+      return;
+    }
     final conversationId = message.data['conversationId']?.toString();
     pendingNotificationRoute.open(conversationId);
   }

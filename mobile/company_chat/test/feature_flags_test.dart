@@ -19,5 +19,9 @@ void main() {
     );
     expect(FeatureFlags.fromReady(null).chatAttachmentsEnabled, isFalse);
     expect(FeatureFlags.fromReady(null).voiceCallingEnabled, isFalse);
+    expect(
+      FeatureFlags.fromReady({'attachmentsEnabled': true, 'callsEnabled': true}).voiceCallingEnabled,
+      isTrue,
+    );
   });
 }

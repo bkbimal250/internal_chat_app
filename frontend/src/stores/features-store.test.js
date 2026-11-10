@@ -23,12 +23,12 @@ describe('features store', () => {
 
   it('loads flags from health/ready', async () => {
     apiClient.get.mockResolvedValue({
-      data: { attachmentsEnabled: true, callsEnabled: false },
+      data: { attachmentsEnabled: true, callsEnabled: true },
     })
     await useFeaturesStore.getState().load()
     expect(apiClient.get).toHaveBeenCalledWith('/health/ready')
     expect(useFeaturesStore.getState().attachmentsEnabled).toBe(true)
-    expect(useFeaturesStore.getState().callsEnabled).toBe(false)
+    expect(useFeaturesStore.getState().callsEnabled).toBe(true)
   })
 
   it('stays disabled when health/ready is unavailable', async () => {

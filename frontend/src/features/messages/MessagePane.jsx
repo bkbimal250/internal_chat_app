@@ -11,6 +11,7 @@ import {
   LogOut,
   MoreVertical,
   Mic,
+  Phone,
   Search,
   Send,
   Smile,
@@ -65,6 +66,7 @@ import { ATTACHMENT_ACCEPT, uploadAttachment } from '@/features/messages/attachm
 import { clearTransfer, loadTransfers, saveTransfers } from '@/features/messages/transfer-runtime'
 import { AttachMenu } from '@/features/messages/AttachMenu'
 import { startVoiceRecording } from '@/features/messages/voice-record'
+import { useCallStore } from '@/features/calls/call-store'
 import { ChatInfoPanel } from '@/features/groups/ChatInfoPanel'
 import { RetentionBanner, retentionCopy } from '@/features/retention/RetentionBanner'
 import { visibleMessages } from '@/lib/messages'
@@ -825,6 +827,7 @@ function MessageThread({
 export function MessagePane({ conversationId }) {
   const { user } = useAuth()
   const { closeChat } = useWorkspace()
+  const callsEnabled = useFeaturesStore((state) => state.callsEnabled)
   const groupPanelOpen = useUiStore((state) => state.groupPanelOpen)
   const setGroupPanelOpen = useUiStore((state) => state.setGroupPanelOpen)
   const setAddMembersOpen = useUiStore((state) => state.setAddMembersOpen)
@@ -963,6 +966,28 @@ export function MessagePane({ conversationId }) {
           </button>
         </div>
         <div className="flex items-center">
+          {!isGroup && callsEnabled && peer ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Voice call"
+              data-testid="voice-call-button"
+              onClick={async () => {
+                try {
+                  await useCallStore.getState().startCall({
+                    userId: peer.id,
+                    name: title,
+                    hasPhoto: Boolean(peer.hasProfilePhoto),
+                    photoVersion: peer.photoVersion,
+                  })
+                } catch (error) {
+                  toast.error(getErrorMessage(error))
+                }
+              }}
+            >
+              <Phone />
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon"

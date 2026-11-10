@@ -11,7 +11,13 @@ class ApiError implements Exception {
   final String? code;
   final String? requestId;
 
-  bool get isAuthFailure => status == 401 || status == 403;
+  bool get isAuthFailure => isSessionInvalid;
+
+  bool get isSessionInvalid {
+    if (status == 401) return true;
+    const codes = {'INVALID_SESSION', 'CSRF_FAILED', 'TRANSPORT_FORBIDDEN'};
+    return status == 403 && code != null && codes.contains(code);
+  }
 
   @override
   String toString() => message;

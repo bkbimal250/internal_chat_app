@@ -1,23 +1,52 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class SessionStore {
-  SessionStore({FlutterSecureStorage? storage})
-      : _storage = storage ??
-            const FlutterSecureStorage(
-              aOptions: AndroidOptions(encryptedSharedPreferences: true),
-            );
+  SessionStore({FlutterSecureStorage? storage, Map<String, String>? memory})
+      : _memory = memory,
+        _storage = memory != null
+            ? null
+            : storage ??
+                const FlutterSecureStorage(
+                  aOptions: AndroidOptions(encryptedSharedPreferences: true),
+                  iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+                );
+
+  factory SessionStore.memory([Map<String, String>? seed]) =>
+      SessionStore(memory: {...?seed});
 
   static const _refreshKey = 'company_chat.refresh_token';
   static const _deviceKey = 'company_chat.device_id';
 
-  final FlutterSecureStorage _storage;
+  final FlutterSecureStorage? _storage;
+  final Map<String, String>? _memory;
   String? accessToken;
   String? csrfToken;
   String? sessionId;
   String? deviceId;
 
+  Future<String?> _read(String key) async {
+    if (_memory != null) return _memory[key];
+    return _storage!.read(key: key);
+  }
+
+  Future<void> _write(String key, String value) async {
+    if (_memory != null) {
+      _memory[key] = value;
+      return;
+    }
+    await _storage!.write(key: key, value: value);
+  }
+
+  Future<void> _delete(String key) async {
+    if (_memory != null) {
+      _memory.remove(key);
+      return;
+    }
+    await _storage!.delete(key: key);
+  }
+
   Future<String?> readDeviceId() async {
-    final existing = await _storage.read(key: _deviceKey);
+    final existing = await _read(_deviceKey);
     if (existing != null && existing.isNotEmpty) {
       deviceId = existing;
       return existing;
@@ -28,20 +57,20 @@ class SessionStore {
   Future<void> writeDeviceId(String? id) async {
     deviceId = id;
     if (id == null || id.isEmpty) {
-      await _storage.delete(key: _deviceKey);
+      await _delete(_deviceKey);
       return;
     }
-    await _storage.write(key: _deviceKey, value: id);
+    await _write(_deviceKey, id);
   }
 
-  Future<String?> readRefreshToken() => _storage.read(key: _refreshKey);
+  Future<String?> readRefreshToken() => _read(_refreshKey);
 
   Future<void> writeRefreshToken(String? token) async {
     if (token == null || token.isEmpty) {
-      await _storage.delete(key: _refreshKey);
+      await _delete(_refreshKey);
       return;
     }
-    await _storage.write(key: _refreshKey, value: token);
+    await _write(_refreshKey, token);
   }
 
   void applyTokens({
@@ -60,7 +89,7 @@ class SessionStore {
     accessToken = null;
     csrfToken = null;
     sessionId = null;
-    await _storage.delete(key: _refreshKey);
-    if (!keepDevice) await _storage.delete(key: _deviceKey);
+    await _delete(_refreshKey);
+    if (!keepDevice) await _delete(_deviceKey);
   }
 }

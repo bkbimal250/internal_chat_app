@@ -31,6 +31,9 @@ import { pushService } from './services/push.service.js';
 import attachmentRoutes from './modules/attachments/attachments.routes.js';
 import retentionRoutes from './modules/retention/retention.routes.js';
 import notifyRoutes from './modules/notify/notify.routes.js';
+import callRoutes from './modules/calls/calls.routes.js';
+import { callsService } from './modules/calls/calls.service.js';
+import { expireStaleCalls } from './jobs/call-timeout.job.js';
 
 export async function buildApp({ config = loadEnv() } = {}) {
   const app = Fastify({
@@ -51,6 +54,7 @@ export async function buildApp({ config = loadEnv() } = {}) {
   app.decorate('broadcaster', broadcaster(app));
   app.decorate('storage', objectStorage(config, app.log));
   app.decorate('push', pushService(app, config));
+  app.decorate('calls', callsService(app, config));
   if (config.nodeEnv === 'test') app.decorate('otpInbox', new Map());
   app.sessionEvents.on('revoked', ({ sessionIds }) => {
     for (const sessionId of sessionIds) {
@@ -60,6 +64,9 @@ export async function buildApp({ config = loadEnv() } = {}) {
         );
       }
     }
+    app.calls.endOwnedBySessions(sessionIds).catch(() =>
+      app.log.warn({ code: 'CALL_SESSION_END_FAILED' }, 'Unable to end calls for revoked sessions'),
+    );
   });
   app.addHook('onClose', async () => database.close());
   app.addHook('onRequest', async (request, reply) => {
@@ -115,6 +122,7 @@ export async function buildApp({ config = loadEnv() } = {}) {
     await attachmentRoutes(app, config);
     await retentionRoutes(app, config);
     await notifyRoutes(app);
+    await callRoutes(app, config);
     await registerWebsocket(app, config);
     if (config.nodeEnv !== 'test') {
       const listener = await database.pool.connect();
@@ -152,7 +160,16 @@ export async function buildApp({ config = loadEnv() } = {}) {
       );
     }, config.cleanupIntervalMs);
     cleanupTimer.unref();
-    app.addHook('onClose', async () => clearInterval(cleanupTimer));
+    const callTimer = setInterval(() => {
+      expireStaleCalls(app).catch(() =>
+        app.log.warn({ code: 'CALL_TIMEOUT_FAILED' }, 'Call timeout sweep failed'),
+      );
+    }, config.callSweepIntervalMs);
+    callTimer.unref();
+    app.addHook('onClose', async () => {
+      clearInterval(cleanupTimer);
+      clearInterval(callTimer);
+    });
     await app.ready();
     return app;
   } catch (error) {

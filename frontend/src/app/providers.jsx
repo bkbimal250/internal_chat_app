@@ -6,6 +6,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { useAuthStore } from '@/stores/auth-store'
 import { useFeaturesStore } from '@/stores/features-store'
 import { RealtimeProvider } from '@/features/realtime/RealtimeProvider'
+import { CallHost } from '@/features/calls/CallHost'
 import { SessionLoading, SessionUnavailable } from '@/features/auth/SessionLoading'
 
 function SessionBootstrap({ children }) {
@@ -33,7 +34,9 @@ export function AppProviders({ children }) {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <SessionBootstrap>
-          <RealtimeProvider>{children}</RealtimeProvider>
+          <RealtimeProvider>
+            <CallHost>{children}</CallHost>
+          </RealtimeProvider>
         </SessionBootstrap>
         <Toaster position="top-right" richColors />
       </TooltipProvider>

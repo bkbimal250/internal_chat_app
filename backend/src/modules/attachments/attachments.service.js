@@ -40,10 +40,12 @@ export function publicAttachment(row) {
 }
 
 export function presentAttachments(files = []) {
-  const list = (Array.isArray(files) ? files : [])
-    .filter(Boolean)
-    .map(publicAttachment)
-    .filter(Boolean);
+  const rows = (Array.isArray(files) ? files : []).filter(Boolean);
+  const names = uniqueDisplayNames(rows);
+  const list = rows.map((row, index) => ({
+    ...publicAttachment(row),
+    displayName: names[index],
+  }));
   return { attachment: list[0] || null, attachments: list };
 }
 
@@ -606,17 +608,11 @@ export function attachmentsService(app, config) {
     async openZipStream(conversationId, userId, ids) {
       const prepared = await this.prepareZip(conversationId, userId, ids);
       const output = zipOutputStream();
-      const streaming = streamZipArchive(output, prepared.files, (key) => storage.getObjectStream(key)).catch(
-        (error) => {
-          if (!output.destroyed) output.destroy(error);
-          throw error;
-        },
-      );
       return {
         ...prepared,
         output,
-        streaming,
         contentDisposition: contentDispositionAttachment(prepared.archiveName),
+        start: () => streamZipArchive(output, prepared.files, (key) => storage.getObjectStream(key)),
       };
     },
     async destroy(id, userId) {

@@ -10,6 +10,7 @@ import {
 } from '../services/michat-filename.js';
 import { streamZipArchive } from '../services/zip-archive.js';
 import { MAX_ZIP_BYTES } from '../services/upload-plan.js';
+import { unzipEntries } from './helpers/unzip-entries.js';
 
 const STAMP = new Date('2026-11-10T12:12:14.000Z');
 
@@ -108,5 +109,33 @@ test('streaming ZIP contains generated names and original bytes without bufferin
   assert.equal(text.includes('att/opaque'), false);
   assert.equal(text.includes('AAAA'), true);
   assert.equal(text.includes('BBBB'), true);
+  const extracted = unzipEntries(buffer);
+  assert.equal(extracted.length, 2);
+  assert.equal(extracted[0].name, 'MiChat Image 2026-11-10 at 5.42.14 PM.jpg');
+  assert.equal(extracted[0].data.toString(), 'AAAA');
+  assert.equal(extracted[1].name, 'secret.txt');
+  assert.equal(extracted[1].data.toString(), 'BBBB');
   assert.ok(MAX_ZIP_BYTES > 1024 * 1024 * 1024);
+});
+
+test('ZIP generation streams entries without concatenating sources first', async () => {
+  const opened = [];
+  const output = new PassThrough();
+  const chunks = [];
+  output.on('data', (chunk) => chunks.push(chunk));
+  const files = Array.from({ length: 8 }, (_, index) => ({
+    storageKey: `att/stream-${index}`,
+    entryName: `MiChat Document 2026-11-10 at 5.42.14 PM (${index + 1}).txt`,
+    sizeBytes: 4,
+  }));
+  await streamZipArchive(output, files, async (key) => {
+    opened.push(key);
+    return Buffer.from(key);
+  });
+  assert.equal(opened.length, 8);
+  assert.ok(chunks.length >= 1);
+  const extracted = unzipEntries(Buffer.concat(chunks));
+  assert.equal(extracted.length, 8);
+  assert.equal(extracted[3].data.toString(), 'att/stream-3');
+  assert.ok(MAX_ZIP_BYTES >= 10 * 1024 * 1024 * 1024);
 });

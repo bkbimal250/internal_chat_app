@@ -32,14 +32,27 @@ export const attachmentsController = (app, config) => {
     download: (request) =>
       service.downloadUrl(request.params.id, request.auth.userId, { download: request.query.download === true }),
     zip: async (request, reply) => {
-      request.raw.setTimeout(0);
-      reply.raw.setTimeout(0);
+      try {
+        request.raw?.setTimeout?.(0);
+      } catch {
+        /* light-my-request's setTimeout requires a listener */
+      }
+      try {
+        reply.raw?.setTimeout?.(0);
+      } catch {
+        /* inject mocks are not sockets */
+      }
       const prepared = await service.openZipStream(request.params.id, request.auth.userId, request.body.ids);
       reply.type('application/zip');
       reply.header('Content-Disposition', prepared.contentDisposition);
       reply.header('Cache-Control', 'no-store');
       reply.header('X-Archive-Name', encodeURIComponent(prepared.archiveName));
-      return reply.send(prepared.output);
+      reply.header('X-Archive-Bytes', String(prepared.totalBytes));
+      const sending = reply.send(prepared.output);
+      prepared.start().catch((error) => {
+        if (!prepared.output.destroyed) prepared.output.destroy(error);
+      });
+      return sending;
     },
     cancel: (request) => service.cancel(request.params.id, request.auth.userId),
     remove: async (request) => {

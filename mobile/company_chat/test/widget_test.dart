@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:company_chat/core/network/public_url.dart';
 import 'package:company_chat/core/theme/app_theme.dart';
 import 'package:company_chat/features/media/media_limits.dart';
@@ -198,5 +200,22 @@ void main() {
     final theme = AppTheme.light();
     expect(theme.colorScheme.primary, isNot(equals(Colors.deepPurple)));
     expect(theme.useMaterial3, isTrue);
+  });
+
+  test('Flutter has no ZIP download action and saves with the provided MiChat name', () {
+    final lib = Directory('lib');
+    final hits = <String>[];
+    for (final entity in lib.listSync(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      final text = entity.readAsStringSync();
+      if (text.contains('attachments/zip') || text.contains('downloadAttachmentsZip') || text.contains('Download all')) {
+        hits.add(entity.path);
+      }
+    }
+    expect(hits, isEmpty);
+    final download = File('lib/features/media/media_download.dart').readAsStringSync();
+    expect(download, contains('fileName'));
+    expect(download, contains("query: {'download': true}"));
+    expect(download.contains('attachments/zip'), isFalse);
   });
 }

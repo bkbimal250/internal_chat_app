@@ -10,6 +10,7 @@ import { hashPassword } from '../services/password.service.js';
 import { authService } from '../modules/auth/auth.service.js';
 import { accessToken } from '../services/token.service.js';
 import { cleanupAttachments } from '../jobs/attachment-cleanup.job.js';
+import { unzipEntries } from './helpers/unzip-entries.js';
 
 const PRODUCTION_BUCKETS = new Set(['michat-main-bucket']);
 const testUrl = process.env.TEST_DATABASE_URL;
@@ -22,6 +23,11 @@ const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
   'base64',
 );
+const JPEG = Buffer.from([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+  0x00, 0xff, 0xd9,
+]);
+const PDF = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
 
 function isolatedBucket() {
   const bucket = process.env.S3_TEST_BUCKET || 'company-chat-test';
@@ -141,6 +147,7 @@ test(
       S3_FORCE_PATH_STYLE: 'true',
       S3_CREATE_BUCKET: 'true',
       ATTACHMENT_PENDING_TTL_MS: '60000',
+      ATTACHMENT_RATE_LIMIT: '1000',
       CHAT_ATTACHMENTS_ENABLED: 'true',
       CALLS_ENABLED: 'false',
     });
@@ -268,7 +275,7 @@ test(
     assertStatus(anonymous, 401);
 
     const naked = await fetch(unsignedObjectUrl(download.json().url));
-    const localStack = /:4566\b/.test(String(s3Endpoint));
+    const localStack = Boolean(s3Endpoint) && !/amazonaws\.com/i.test(String(s3Endpoint));
     if (localStack) {
       // LocalStack community does not emulate AWS Block Public Access unless ENFORCE_IAM is on.
       assert.ok([200, 401, 403, 404].includes(naked.status));
@@ -573,10 +580,15 @@ test(
     });
     assertStatus(zip, 200);
     assert.equal(String(zip.headers['content-type'] || '').includes('zip'), true);
+    assert.equal(Number(zip.headers['x-archive-bytes']) > 0, true);
     const zipBytes = Buffer.from(zip.rawPayload || zip.payload || []);
     assert.equal(zipBytes.subarray(0, 2).toString(), 'PK');
     assert.equal(zipBytes.includes(Buffer.from('MiChat Image')), true);
     assert.equal(zipBytes.includes(Buffer.from('album-1.png')), false);
+    const unzippedPair = unzipEntries(zipBytes);
+    assert.equal(unzippedPair.length, 2);
+    assert.equal(unzippedPair.every((entry) => entry.data.equals(PNG)), true);
+    assert.equal(unzippedPair.every((entry) => entry.name.startsWith('MiChat Image')), true);
     const zipForbidden = await app.inject({
       method: 'POST',
       url: `/api/v1/conversations/${conversationId}/attachments/zip`,
@@ -616,6 +628,219 @@ test(
       headers: header(sessionB),
     });
     assertStatus(gone, 404);
+  },
+);
+
+function mixedUpload(index) {
+  if (index < 30) {
+    return { originalName: `secret-photo-${index}.png`, mimeType: 'image/png', body: PNG };
+  }
+  if (index < 40) {
+    return { originalName: `secret-scan-${index}.jpg`, mimeType: 'image/jpeg', body: JPEG };
+  }
+  if (index < 45) {
+    return { originalName: `secret-contract-${index}.pdf`, mimeType: 'application/pdf', body: PDF };
+  }
+  return {
+    originalName: `secret-notes-${index}.txt`,
+    mimeType: 'text/plain',
+    body: Buffer.from(`confidential notes ${index}\nline two\n`),
+  };
+}
+
+async function mapPool(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (cursor < items.length) {
+        const index = cursor;
+        cursor += 1;
+        results[index] = await worker(items[index], index);
+      }
+    }),
+  );
+  return results;
+}
+
+test(
+  'Phase 5: fifty mixed multipart uploads zip with original bytes and MiChat names',
+  { skip: !enabled && 'Set TEST_DATABASE_URL ending in _test and S3_ENDPOINT' },
+  async (t) => {
+    const config = loadEnv({
+      NODE_ENV: 'test',
+      LOG_LEVEL: 'silent',
+      DATABASE_URL: testUrl,
+      JWT_SECRET: 'phase-five-fifty-secret-'.repeat(3),
+      CORS_ORIGINS: 'http://127.0.0.1:5173',
+      S3_ENDPOINT: s3Endpoint,
+      S3_PUBLIC_ENDPOINT: process.env.S3_PUBLIC_ENDPOINT || s3Endpoint,
+      S3_ACCESS_KEY: process.env.S3_ACCESS_KEY,
+      S3_SECRET_KEY: process.env.S3_SECRET_KEY,
+      S3_BUCKET: isolatedBucket(),
+      S3_REGION: process.env.S3_REGION || 'us-east-1',
+      S3_FORCE_PATH_STYLE: 'true',
+      S3_CREATE_BUCKET: 'true',
+      ATTACHMENT_PENDING_TTL_MS: '60000',
+      ATTACHMENT_RATE_LIMIT: '1000',
+      CHAT_ATTACHMENTS_ENABLED: 'true',
+      CALLS_ENABLED: 'false',
+    });
+    const app = await buildApp({ config });
+    t.after(() => app.close());
+    await app.storage.ensureBucket();
+    await app.database.db.execute(
+      sql`truncate table attachments, audit_logs, consumed_refresh_tokens, sessions, devices, users restart identity cascade`,
+    );
+    const password = 'Phase-Five-Fifty-9!';
+    const hash = await hashPassword(password);
+    const [owner, peer, stranger] = await app.database.db
+      .insert(users)
+      .values(
+        ['fifty-a', 'fifty-b', 'fifty-c'].map((username) => ({
+          username,
+          displayName: username,
+          passwordHash: hash,
+          mustChangePassword: false,
+        })),
+      )
+      .returning();
+    const auth = authService(app, config);
+    const login = (user, device) =>
+      auth.login(
+        { username: user.username, password, clientType: 'native', platform: 'android', deviceName: device },
+        { ip: '127.0.0.1' },
+      );
+    const sessionA = await login(owner, 'a1');
+    const sessionB = await login(peer, 'b1');
+    const sessionC = await login(stranger, 'c1');
+    const token = (result) => accessToken(app, result.user, result.session);
+    const header = (result) => ({ authorization: `Bearer ${token(result)}` });
+    const conversation = await app.inject({
+      method: 'POST',
+      url: '/api/v1/conversations/direct',
+      headers: header(sessionA),
+      payload: { userId: peer.id },
+    });
+    assertStatus(conversation, 201);
+    const conversationId = conversation.json().id;
+
+    const pending = await mapPool(Array.from({ length: 50 }, (_, index) => index), 5, async (index) => {
+      const spec = mixedUpload(index);
+      const started = await app.inject({
+        method: 'POST',
+        url: `/api/v1/conversations/${conversationId}/attachments`,
+        headers: header(sessionA),
+        payload: {
+          fileName: spec.originalName,
+          mimeType: spec.mimeType,
+          sizeBytes: spec.body.length,
+          strategy: 'multipart',
+        },
+      });
+      assertStatus(started, 201);
+      assert.equal(started.json().mode, 'multipart');
+      const signed = await app.inject({
+        method: 'POST',
+        url: `/api/v1/attachments/${started.json().id}/parts`,
+        headers: header(sessionA),
+        payload: { partNumbers: [1] },
+      });
+      assertStatus(signed, 200);
+      const uploadUrl = signed.json().parts[0].uploadUrl;
+      let uploaded = await fetch(uploadUrl, { method: 'PUT', body: spec.body });
+      if (!uploaded.ok) uploaded = await fetch(uploadUrl, { method: 'PUT', body: spec.body });
+      assert.ok(uploaded.ok, `multipart PUT failed ${uploaded.status}`);
+      if (index === 0) {
+        const retried = await fetch(uploadUrl, { method: 'PUT', body: spec.body });
+        assert.ok(retried.ok, `multipart retry PUT failed ${retried.status}`);
+      }
+      return {
+        id: started.json().id,
+        etag: uploaded.headers.get('etag'),
+        spec,
+      };
+    });
+
+    const cancelledInit = await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversationId}/attachments`,
+      headers: header(sessionA),
+      payload: { fileName: 'draft-cancel.png', mimeType: 'image/png', sizeBytes: PNG.length, strategy: 'multipart' },
+    });
+    assertStatus(cancelledInit, 201);
+    const cancelled = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/attachments/${cancelledInit.json().id}`,
+      headers: header(sessionA),
+    });
+    assertStatus(cancelled, 200);
+    const partial = await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversationId}/attachments/complete`,
+      headers: header(sessionA),
+      payload: {
+        clientMessageId: randomUUID(),
+        items: [{ id: pending[0].id, parts: [{ partNumber: 1, etag: pending[0].etag }] }, { id: cancelledInit.json().id }],
+      },
+    });
+    assert.ok([404, 409].includes(partial.statusCode));
+
+    const batched = await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversationId}/attachments/complete`,
+      headers: header(sessionA),
+      payload: {
+        clientMessageId: randomUUID(),
+        caption: 'fifty mixed files',
+        items: pending.map((item) => ({ id: item.id, parts: [{ partNumber: 1, etag: item.etag }] })),
+      },
+    });
+    assertStatus(batched, 201);
+    const files = batched.json().attachments;
+    assert.equal(files.length, 50);
+    assert.equal(JSON.stringify(batched.json()).includes('secret-photo-'), false);
+    assert.equal(JSON.stringify(batched.json()).includes('secret-notes-'), false);
+    assert.equal(files.every((file) => String(file.displayName).startsWith('MiChat ')), true);
+    assert.equal(files.every((file) => file.originalName === undefined), true);
+
+    const zipUnauthorized = await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversationId}/attachments/zip`,
+      payload: { ids: files.map((file) => file.id) },
+    });
+    assertStatus(zipUnauthorized, 401);
+    const zipForbidden = await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversationId}/attachments/zip`,
+      headers: header(sessionC),
+      payload: { ids: files.map((file) => file.id) },
+    });
+    assert.ok(
+      [403, 404].includes(zipForbidden.statusCode),
+      `outsider zip ${zipForbidden.statusCode} ${JSON.stringify(zipForbidden.json())}`,
+    );
+
+    const zip = await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversationId}/attachments/zip`,
+      headers: header(sessionB),
+      payload: { ids: files.map((file) => file.id) },
+    });
+    assertStatus(zip, 200);
+    assert.equal(Number(zip.headers['x-archive-bytes']) > 0, true);
+    const zipBytes = Buffer.from(zip.rawPayload || zip.payload || []);
+    const extracted = unzipEntries(zipBytes);
+    assert.equal(extracted.length, 50);
+    const byName = new Map(extracted.map((entry) => [entry.name, entry]));
+    assert.equal(byName.size, 50);
+    for (const file of files) {
+      const entry = byName.get(file.displayName);
+      assert.ok(entry, `missing ZIP entry ${file.displayName}`);
+      const uploaded = pending.find((item) => item.id === file.id);
+      assert.equal(entry.data.equals(uploaded.spec.body), true);
+      assert.equal(entry.name.includes(uploaded.spec.originalName), false);
+    }
   },
 );
 

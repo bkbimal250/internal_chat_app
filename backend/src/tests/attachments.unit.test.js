@@ -36,6 +36,8 @@ test('presentAttachments preserves order and keeps a legacy singular attachment'
   ]);
   assert.equal(presented.attachment.id, 'a');
   assert.equal(presented.attachments.map((row) => row.id).join(','), 'a,b');
+  assert.equal(presented.attachments[0].displayName === presented.attachments[1].displayName, false);
+  assert.equal(presented.attachments.every((row) => String(row.displayName).startsWith('MiChat Image')), true);
   assert.equal(batchMessageType(['image', 'image']), 'image');
   assert.equal(batchMessageType(['image', 'video']), 'file');
   assert.equal(MAX_ATTACHMENT_BATCH, 50);

@@ -3,6 +3,31 @@ import { getAccessToken, getCsrfToken } from '@/services/session-tokens'
 import { archiveFileName } from '@/lib/michat-filename'
 
 const MAX_ZIP_FILES = 50
+export const MAX_BLOB_ZIP_BYTES = 256 * 1024 * 1024
+
+export function assertBlobZipFits(bytes) {
+  if (bytes > MAX_BLOB_ZIP_BYTES) {
+    const error = new Error(
+      'This ZIP is too large to download in this browser. Try Chrome or Edge, which can save the archive directly to disk.',
+    )
+    error.code = 'ZIP_TOO_LARGE_FOR_MEMORY'
+    throw error
+  }
+}
+
+function announcedArchiveBytes(headers) {
+  const raw = headers.get('x-archive-bytes') || headers.get('content-length')
+  const value = Number(raw)
+  return Number.isFinite(value) && value > 0 ? value : 0
+}
+
+function cancelBody(body) {
+  try {
+    body?.cancel?.()
+  } catch {
+    /* already closed */
+  }
+}
 
 export async function downloadAttachmentsZip({
   conversationId,
@@ -43,7 +68,7 @@ export async function downloadAttachmentsZip({
 
   const archiveName =
     decodeURIComponent(response.headers.get('x-archive-name') || '') || archiveFileName()
-  const total = Number(response.headers.get('content-length')) || 0
+  const total = announcedArchiveBytes(response.headers) || Number(response.headers.get('content-length')) || 0
 
   if (typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function' && response.body) {
     try {
@@ -59,10 +84,15 @@ export async function downloadAttachmentsZip({
         await writable.abort().catch(() => {})
         throw error
       }
-      return { archiveName }
+      return { archiveName, method: 'file-picker' }
     } catch (error) {
       if (error?.name === 'AbortError') throw error
     }
+  }
+
+  if (total > MAX_BLOB_ZIP_BYTES) {
+    cancelBody(response.body)
+    assertBlobZipFits(total)
   }
 
   const blob = await collectBlob(response.body, { total, onProgress, signal })
@@ -74,7 +104,7 @@ export async function downloadAttachmentsZip({
   link.click()
   link.remove()
   window.setTimeout(() => URL.revokeObjectURL(href), 1500)
-  return { archiveName }
+  return { archiveName, method: 'blob' }
 }
 
 async function writeStream(body, writable, { total, onProgress, signal }) {
@@ -94,13 +124,22 @@ async function collectBlob(body, { total, onProgress, signal }) {
   const reader = body.getReader()
   const chunks = []
   let received = 0
-  while (true) {
-    if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError')
-    const { done, value } = await reader.read()
-    if (done) break
-    chunks.push(value)
-    received += value.byteLength
-    onProgress?.({ received, total, percent: total ? Math.min(100, Math.round((received / total) * 100)) : null })
+  try {
+    while (true) {
+      if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError')
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+      received += value.byteLength
+      if (received > MAX_BLOB_ZIP_BYTES) {
+        await reader.cancel().catch(() => {})
+        assertBlobZipFits(received)
+      }
+      onProgress?.({ received, total, percent: total ? Math.min(100, Math.round((received / total) * 100)) : null })
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {})
+    throw error
   }
   return new Blob(chunks, { type: 'application/zip' })
 }

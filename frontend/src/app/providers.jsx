@@ -4,6 +4,7 @@ import { queryClient } from '@/lib/query-client'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 import { useAuthStore } from '@/stores/auth-store'
+import { useFeaturesStore } from '@/stores/features-store'
 import { RealtimeProvider } from '@/features/realtime/RealtimeProvider'
 import { SessionLoading, SessionUnavailable } from '@/features/auth/SessionLoading'
 
@@ -13,6 +14,7 @@ function SessionBootstrap({ children }) {
 
   useEffect(() => {
     restoreSession()
+    useFeaturesStore.getState().load()
   }, [restoreSession])
 
   if (status === 'initializing') {

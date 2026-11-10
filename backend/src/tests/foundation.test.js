@@ -136,6 +136,19 @@ test('production does not auto-create S3 buckets unless S3_CREATE_BUCKET is set'
   };
   assert.equal(loadEnv(required).s3CreateBucket, false);
   assert.equal(loadEnv({ ...required, S3_CREATE_BUCKET: '1' }).s3CreateBucket, true);
+  const aws = loadEnv({
+    ...required,
+    S3_ENDPOINT: '',
+    S3_PUBLIC_ENDPOINT: '',
+    S3_REGION: 'ap-south-1',
+    S3_FORCE_PATH_STYLE: 'false',
+    S3_CREATE_BUCKET: 'false',
+  });
+  assert.equal(aws.s3Endpoint, '');
+  assert.equal(aws.s3ForcePathStyle, false);
+  assert.equal(aws.s3CreateBucket, false);
+  assert.equal(aws.chatAttachmentsEnabled, false);
+  assert.equal(aws.callsEnabled, false);
 });
 
 test(
@@ -156,7 +169,13 @@ test(
     t.after(() => app.close());
     const ready = await app.inject('/health/ready');
     assert.equal(ready.statusCode, 200);
-    assert.deepEqual(ready.json(), { status: 'ready', database: 'connected', storage: 'unconfigured' });
+    assert.deepEqual(ready.json(), {
+      status: 'ready',
+      database: 'connected',
+      storage: 'unconfigured',
+      attachmentsEnabled: true,
+      callsEnabled: true,
+    });
     await app.close();
     await assert.rejects(app.database.check());
   },

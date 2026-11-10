@@ -1,6 +1,8 @@
 import 'package:company_chat/app/router.dart';
+import 'package:company_chat/core/config/feature_flags.dart';
 import 'package:company_chat/core/notifications/notification_coordinator.dart';
 import 'package:company_chat/core/theme/app_theme.dart';
+import 'package:company_chat/features/auth/presentation/auth_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -15,7 +17,14 @@ class CompanyChatApp extends ConsumerWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       routerConfig: router,
-      builder: (context, child) => NotificationHost(child: child ?? const SizedBox.shrink()),
+      builder: (context, child) {
+        ref.listen(authControllerProvider, (previous, next) {
+          if (next.isAuthenticated) {
+            ref.read(featureFlagsProvider.notifier).refresh();
+          }
+        });
+        return NotificationHost(child: child ?? const SizedBox.shrink());
+      },
     );
   }
 }

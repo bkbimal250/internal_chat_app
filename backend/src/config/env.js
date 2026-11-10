@@ -1,5 +1,9 @@
 export function loadEnv(source = process.env) {
   const errors = [];
+  const flagEnabled = (value, fallback) => {
+    if (value == null || value === '') return fallback;
+    return ['1', 'true', 'TRUE', 'yes', 'YES'].includes(value);
+  };
   const integer = (key, fallback, min, max) => {
     const value = source[key] ?? String(fallback);
     const number = Number(value);
@@ -84,13 +88,19 @@ export function loadEnv(source = process.env) {
     retentionWorkerEnabled: ['1', 'true', 'TRUE', 'yes', 'YES'].includes(
       source.RETENTION_WORKER_ENABLED ?? '',
     ),
-    s3Endpoint: source.S3_ENDPOINT ?? '',
-    s3PublicEndpoint: source.S3_PUBLIC_ENDPOINT ?? source.S3_ENDPOINT ?? '',
-    s3Region: source.S3_REGION ?? 'us-east-1',
-    s3Bucket: source.S3_BUCKET ?? 'company-chat',
+    s3Endpoint: String(source.S3_ENDPOINT ?? '').trim(),
+    s3PublicEndpoint:
+      String(source.S3_PUBLIC_ENDPOINT ?? '').trim() || String(source.S3_ENDPOINT ?? '').trim(),
+    s3Region: String(source.S3_REGION ?? 'us-east-1').trim() || 'us-east-1',
+    s3Bucket: String(source.S3_BUCKET ?? 'company-chat').trim() || 'company-chat',
     s3AccessKey: source.S3_ACCESS_KEY ?? '',
     s3SecretKey: source.S3_SECRET_KEY ?? '',
-    s3ForcePathStyle: source.S3_FORCE_PATH_STYLE !== 'false',
+    s3ForcePathStyle:
+      source.S3_FORCE_PATH_STYLE === 'false' || source.S3_FORCE_PATH_STYLE === '0'
+        ? false
+        : source.S3_FORCE_PATH_STYLE === 'true' || source.S3_FORCE_PATH_STYLE === '1'
+          ? true
+          : Boolean(String(source.S3_ENDPOINT ?? '').trim()),
     s3CreateBucket:
       source.S3_CREATE_BUCKET === '1' || source.S3_CREATE_BUCKET === 'true'
         ? true
@@ -109,6 +119,8 @@ export function loadEnv(source = process.env) {
     attachmentRateLimit: integer('ATTACHMENT_RATE_LIMIT', 60, 1, 1000),
     firebaseServiceAccountPath: source.FIREBASE_SERVICE_ACCOUNT_PATH ?? '',
     trustProxy: source.TRUST_PROXY === '1' || source.TRUST_PROXY === 'true',
+    chatAttachmentsEnabled: flagEnabled(source.CHAT_ATTACHMENTS_ENABLED, nodeEnv !== 'production'),
+    callsEnabled: flagEnabled(source.CALLS_ENABLED, nodeEnv !== 'production'),
     host: source.HOST ?? '0.0.0.0',
     port: integer('PORT', 3001, 1, 65535),
     dbPoolMax: integer('DB_POOL_MAX', 10, 1, 100),
@@ -142,14 +154,20 @@ export function loadEnv(source = process.env) {
     if (!config.smsUsername.trim() || !config.smsApiKey.trim() || !config.smsTemplateId.trim()) {
       errors.push('Production SMS username, API key and template ID are required');
     }
-    if (!config.s3Endpoint.trim() || !config.s3AccessKey.trim() || !config.s3SecretKey.trim()) {
-      errors.push('Production S3 endpoint and credentials are required');
+    if (!config.s3AccessKey.trim() || !config.s3SecretKey.trim() || !config.s3Bucket.trim()) {
+      errors.push('Production S3 credentials and bucket are required');
     }
+  }
+  for (const [key, value] of [
+    ['S3_ENDPOINT', config.s3Endpoint],
+    ['S3_PUBLIC_ENDPOINT', config.s3PublicEndpoint],
+  ]) {
+    if (!value) continue;
     try {
-      const url = new URL(config.s3Endpoint);
+      const url = new URL(value);
       if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
     } catch {
-      errors.push('S3_ENDPOINT must be an HTTP(S) URL');
+      errors.push(`${key} must be an HTTP(S) URL when set`);
     }
   }
   if (!config.host.trim()) errors.push('HOST must not be empty');

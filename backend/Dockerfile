@@ -19,6 +19,7 @@ ENV GIT_SHA=$GIT_SHA
 COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json package-lock.json ./
 COPY --chown=node:node src ./src
+COPY --chown=node:node scripts ./scripts
 USER node
 EXPOSE 3001
 HEALTHCHECK --interval=10s --timeout=4s --start-period=15s --retries=3 \

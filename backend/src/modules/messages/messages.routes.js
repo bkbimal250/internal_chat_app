@@ -6,8 +6,8 @@ const id = { type: 'string', format: 'uuid' },
     properties: p,
     ...(required ? { required } : {}),
   });
-export default async function messageRoutes(app) {
-  const c = messagesController(app),
+export default async function messageRoutes(app, config) {
+  const c = messagesController(app, config),
     g = app.authenticate;
   app.get(
     '/api/v1/conversations/:id/messages',

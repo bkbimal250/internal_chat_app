@@ -197,7 +197,7 @@ test('deploy.sh validates VPS safety after load_env and backups before migrate',
   assert.match(deploy, /record_previous_tag/);
   assert.match(deploy, /record_previous_images/);
   assert.match(deploy, /record_deployed_tag/);
-  assert.match(deploy, /rollback\.sh" --from-failure/);
+  assert.match(deploy, /bash "\$SCRIPT_DIR\/rollback\.sh" --from-failure/);
   assert.match(deploy, /No previous verified image to restore/);
   assert.match(lib, /record_previous_images/);
   assert.match(lib, /PREVIOUS_IMAGES_FILE/);

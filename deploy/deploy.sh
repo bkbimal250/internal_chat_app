@@ -73,7 +73,7 @@ if ! "${HEALTHCHECK_SH:-$SCRIPT_DIR/healthcheck.sh}"; then
   echo "Deployment health checks failed; not recording ${TAG} as deployed." >&2
   if [[ "$NO_ROLLBACK" -eq 0 && "$recorded_images" -eq 1 ]]; then
     echo "Attempting rollback to recorded image IDs" >&2
-    if ! "$SCRIPT_DIR/rollback.sh" --from-failure; then
+    if ! bash "$SCRIPT_DIR/rollback.sh" --from-failure; then
       echo "Rollback failed; application images may still be ${TAG}. Database schema was not reverted." >&2
     else
       echo "Rollback restored recorded image IDs. Database schema was not reverted." >&2

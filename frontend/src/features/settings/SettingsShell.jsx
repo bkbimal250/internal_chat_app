@@ -84,16 +84,16 @@ export function SettingsShell({ user, isAdmin }) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-muted/40" data-testid="settings-shell">
-      <div className="flex h-11 shrink-0 items-center gap-3 border-b bg-background px-3">
-        <h1 className="text-[15px] font-semibold">Settings</h1>
-        <div className="ml-auto w-56">
+    <div className="flex h-full min-h-0 flex-col bg-muted/30" data-testid="settings-shell">
+      <div className="flex h-12 shrink-0 items-center gap-3 border-b bg-background px-4">
+        <h1 className="text-[15px] font-semibold tracking-tight">Settings</h1>
+        <div className="ml-auto w-64 max-w-[50%]">
           <SettingsSearch value={query} onChange={setQuery} />
         </div>
       </div>
       <div className="flex min-h-0 flex-1">
-        <nav className="hidden w-56 shrink-0 border-r bg-background p-2 lg:block" aria-label="Settings categories">
-          <div className="space-y-0.5">
+        <nav className="hidden w-60 shrink-0 border-r bg-background p-3 lg:block" aria-label="Settings categories">
+          <div className="space-y-1">
             {categories.map((item) => (
               <SettingsNavItem
                 key={item.id}
@@ -108,7 +108,7 @@ export function SettingsShell({ user, isAdmin }) {
           </div>
         </nav>
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex gap-1 overflow-x-auto border-b bg-background px-2 py-1.5 lg:hidden">
+          <div className="flex gap-1 overflow-x-auto border-b bg-background px-2 py-2 lg:hidden">
             {categories.map((item) => {
               const Icon = item.icon
               const selected = !searching && category === item.id
@@ -117,7 +117,7 @@ export function SettingsShell({ user, isAdmin }) {
                   key={item.id}
                   type="button"
                   onClick={() => openCategory(item.id)}
-                  className={`flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs ${selected ? 'bg-accent font-medium' : 'text-muted-foreground hover:bg-muted'}`}
+                  className={`flex shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs ${selected ? 'bg-accent font-medium' : 'text-muted-foreground hover:bg-muted'}`}
                 >
                   <Icon className="size-3.5" />
                   {item.label}
@@ -129,7 +129,7 @@ export function SettingsShell({ user, isAdmin }) {
             <ScrollArea className="h-full">
               <div className="mx-auto w-full max-w-[760px] space-y-2 p-4">
                 <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Search results</p>
-                <div className="overflow-hidden rounded-md border bg-card">
+                <div className="overflow-hidden rounded-xl border bg-card shadow-xs">
                   {results.length ? (
                     results.map((item) => (
                       <SettingsRow

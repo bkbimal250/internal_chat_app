@@ -63,7 +63,7 @@ import { cn } from '@/lib/utils'
 import { getErrorMessage } from '@/services/api-error'
 import { toast } from 'sonner'
 import { AttachmentMedia, UploadProgress } from '@/features/messages/AttachmentViews'
-import { AttachmentDraftTray } from '@/features/messages/AttachmentDraftTray'
+import { MediaSendComposer } from '@/features/messages/MediaSendComposer'
 import {
   addSelectedFiles,
   messageAttachments,
@@ -239,6 +239,7 @@ function Composer({ conversationId, apiRef, canSend = true }) {
   const [uploads, setUploads] = useState([])
   const [drafts, setDrafts] = useState([])
   const [sendingDrafts, setSendingDrafts] = useState(false)
+  const [discardSelection, setDiscardSelection] = useState(false)
   const [mediaQuality, setMediaQuality] = useState('auto')
   const typingRef = useRef(null)
   const inputRef = useRef(null)
@@ -276,10 +277,7 @@ function Composer({ conversationId, apiRef, canSend = true }) {
   }
 
   async function send() {
-    if (drafts.length) {
-      await sendDrafts()
-      return
-    }
+    if (drafts.length) return
     emitTyping(false)
     const content = String(inputRef.current?.value ?? text).trim()
     if (!content) return
@@ -456,6 +454,7 @@ function Composer({ conversationId, apiRef, canSend = true }) {
       if (item.attachmentId) attachmentsApi.remove(item.attachmentId).catch(() => {})
     }
     setDrafts([])
+    setDiscardSelection(false)
   }
 
   async function uploadDraft(item) {
@@ -516,19 +515,35 @@ function Composer({ conversationId, apiRef, canSend = true }) {
     }
   }
 
-  async function sendDrafts() {
-    if (!drafts.length || sendingDrafts) return
+  async function sendDrafts(preparedItems) {
+    const batch = Array.isArray(preparedItems) && preparedItems.length ? preparedItems : drafts
+    if (!batch.length || sendingDrafts) return
+    if (Array.isArray(preparedItems) && preparedItems.length) {
+      for (const item of preparedItems) {
+        if (item.previousPreviewUrl && item.previousPreviewUrl !== item.previewUrl) {
+          URL.revokeObjectURL(item.previousPreviewUrl)
+        }
+        if (item.previousAttachmentId) attachmentsApi.remove(item.previousAttachmentId).catch(() => {})
+      }
+      setDrafts(preparedItems)
+    }
     emitTyping(false)
     setSendingDrafts(true)
     const caption = String(inputRef.current?.value ?? text).trim()
     const clientMessageId = crypto.randomUUID()
     const replyToMessageId = replyTo?.id
     try {
-      const pending = drafts.filter((item) => item.status !== 'uploaded' || !item.attachmentId)
-      const already = drafts.filter((item) => item.status === 'uploaded' && item.attachmentId)
+      const pending = batch.filter((item) => item.status !== 'uploaded' || !item.attachmentId)
       const uploaded = (await runPool(pending, FILE_UPLOAD_CONCURRENCY, uploadDraft)).filter(Boolean)
-      const ready = [...already, ...uploaded.filter((item) => item.status === 'uploaded' && item.attachmentId)]
-      if (ready.length !== drafts.length) {
+      const uploadedById = new Map(
+        uploaded.filter((item) => item?.status === 'uploaded' && item.attachmentId).map((item) => [item.id, item]),
+      )
+      const ready = batch
+        .map((item) =>
+          item.status === 'uploaded' && item.attachmentId && !uploadedById.has(item.id) ? item : uploadedById.get(item.id),
+        )
+        .filter(Boolean)
+      if (ready.length !== batch.length) {
         toast.error('Some files failed to upload. Retry or remove them, then send.')
         return
       }
@@ -547,7 +562,7 @@ function Composer({ conversationId, apiRef, canSend = true }) {
         data: upsertMessage(current?.data ?? [], saved),
       }))
       touchConversationFromMessage(conversationId, saved)
-      revokePreviews(drafts)
+      revokePreviews(batch)
       setDrafts([])
       setText('')
       setReplyTo(null)
@@ -638,15 +653,25 @@ function Composer({ conversationId, apiRef, canSend = true }) {
           onRetry={(row) => startUpload(row.file, row)}
         />
       ))}
-      <AttachmentDraftTray
-        items={drafts}
-        sending={sendingDrafts}
-        onRemove={removeDraft}
-        onRetry={(item) => uploadDraft(item)}
-        onCancel={(item) => item.controller?.abort()}
-        onAddMore={() => fileRef.current?.click()}
-        onClear={clearDrafts}
-      />
+      {drafts.length ? (
+        <MediaSendComposer
+          items={drafts}
+          caption={text}
+          onCaptionChange={onChange}
+          sending={sendingDrafts}
+          quality={mediaQuality}
+          onQualityChange={setMediaQuality}
+          onAddMore={() => fileRef.current?.click()}
+          onSend={sendDrafts}
+          onRetry={(item) => uploadDraft(item)}
+          onRemove={removeDraft}
+          onCancelUpload={(item) => item.controller?.abort()}
+          onRequestClose={() => setDiscardSelection(true)}
+          discardOpen={discardSelection}
+          onConfirmDiscard={clearDrafts}
+          onCancelDiscard={() => setDiscardSelection(false)}
+        />
+      ) : null}
       {!canSend ? (
         <div className="border-t bg-card px-4 py-3 text-center text-sm text-muted-foreground" data-testid="admins-only-composer">
           Only group admins can send messages.
@@ -774,7 +799,7 @@ function Composer({ conversationId, apiRef, canSend = true }) {
           size="icon"
           className="size-11 shrink-0 rounded-full"
           aria-label={recording ? 'Send audio' : 'Send message'}
-          data-testid="send-message"
+          data-testid={drafts.length ? 'composer-send-message' : 'send-message'}
           onClick={recording ? toggleVoice : send}
         >
           <Send />

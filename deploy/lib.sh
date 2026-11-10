@@ -10,6 +10,8 @@ HEALTH_DELAY_SECONDS="${HEALTH_DELAY_SECONDS:-5}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-4}"
 DEPLOYED_SHA_FILE="${DEPLOYED_SHA_FILE:-.deployed-sha}"
 PREVIOUS_SHA_FILE="${PREVIOUS_SHA_FILE:-.previous-sha}"
+PREVIOUS_IMAGES_FILE="${PREVIOUS_IMAGES_FILE:-.previous-images}"
+LOCAL_ROLLBACK_TAG="${LOCAL_ROLLBACK_TAG:-local-rollback}"
 
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-internal-chat}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
@@ -73,6 +75,10 @@ refuse_destructive() {
 
 compose() {
   refuse_destructive "$@"
+  if [[ -n "${COMPOSE_HOOKS:-}" && -f "${COMPOSE_HOOKS}/compose" ]]; then
+    bash "${COMPOSE_HOOKS}/compose" "$@"
+    return
+  fi
   local files=(-f "$COMPOSE_FILE")
   if storage_in_cluster; then
     files+=(-f "$COMPOSE_LOCAL_S3_FILE")
@@ -149,6 +155,10 @@ require_deploy_safety() {
 }
 
 require_deploy_user() {
+  if [[ "${DEPLOY_HARNESS:-}" == "1" ]]; then
+    echo "Deploy harness: skipping deploy-user check"
+    return 0
+  fi
   if [[ "$(id -u)" -eq 0 || "$(id -un)" == "root" ]]; then
     echo "Refusing to deploy as root. Use the deploy user so Docker uses that user's GHCR credentials in ~/.docker/config.json." >&2
     exit 1
@@ -239,6 +249,44 @@ running_compose_image() {
   compose ps -a --format '{{.Service}} {{.Image}}' 2>/dev/null | awk -v s="$service" '$1 == s { print $2; exit }' || true
 }
 
+running_compose_image_id() {
+  local service="$1"
+  if [[ "$service" == "api" && -n "${RUNNING_IMAGE_ID_API:-}" ]]; then
+    printf '%s\n' "${RUNNING_IMAGE_ID_API}"
+    return 0
+  fi
+  if [[ "$service" == "web" && -n "${RUNNING_IMAGE_ID_WEB:-}" ]]; then
+    printf '%s\n' "${RUNNING_IMAGE_ID_WEB}"
+    return 0
+  fi
+  local cid=""
+  cid="$(compose ps -q "$service" 2>/dev/null || true)"
+  if [[ -z "$cid" ]]; then
+    return 1
+  fi
+  docker inspect --format '{{.Image}}' "$cid" 2>/dev/null
+}
+
+normalize_image_id() {
+  local raw
+  raw="$(printf '%s' "${1:-}" | tr -d '[:space:]')"
+  if [[ "$raw" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    printf '%s\n' "$raw"
+    return 0
+  fi
+  return 1
+}
+
+image_repository() {
+  local ref="${1:-}"
+  [[ -n "$ref" ]] || return 1
+  if [[ "$ref" == *@* ]]; then
+    printf '%s\n' "${ref%@*}"
+    return 0
+  fi
+  printf '%s\n' "${ref%:*}"
+}
+
 discover_previous_tag() {
   local new_tag="${1:-}"
   local candidate=""
@@ -267,12 +315,18 @@ record_previous_tag() {
   local previous=""
   if previous="$(discover_previous_tag "$new_tag")"; then
     atomic_write "$PREVIOUS_SHA_FILE" "$previous"
-    echo "Previous image tag for rollback: ${previous}" >&2
+    echo "Previous image tag recorded for operators: ${previous}" >&2
+    echo "Rollback restores image IDs from ${PREVIOUS_IMAGES_FILE}, not this mutable tag." >&2
     printf '%s\n' "$previous"
     return 0
   fi
-  rm -f "$PREVIOUS_SHA_FILE"
-  echo "No previous deployment tag; rollback will be skipped if this rollout fails." >&2
+  if [[ -f "$PREVIOUS_SHA_FILE" ]]; then
+    echo "Keeping existing ${PREVIOUS_SHA_FILE}; new tag matches the running/deployed tag." >&2
+    echo "Rollback uses recorded image IDs in ${PREVIOUS_IMAGES_FILE}." >&2
+    cat "$PREVIOUS_SHA_FILE"
+    return 0
+  fi
+  echo "No previous deployment tag file; rollback still uses recorded image IDs if available." >&2
   return 1
 }
 
@@ -281,23 +335,190 @@ record_deployed_tag() {
   atomic_write "$DEPLOYED_SHA_FILE" "$tag"
 }
 
-rollback_target_images_available() {
-  local tag="$1"
-  local api_base="${API_IMAGE%:*}"
-  local web_base="${WEB_IMAGE%:*}"
-  if [[ "${ROLLBACK_IMAGE_CHECK:-}" == "missing" ]]; then
-    echo "Rollback target images are not available for ${tag}." >&2
+atomic_write_file() {
+  local dest="$1"
+  local tmp
+  tmp="$(mktemp "${dest}.tmp.XXXXXX")"
+  cat > "$tmp"
+  mv -f "$tmp" "$dest"
+}
+
+write_previous_images() {
+  local api_id="$1"
+  local web_id="$2"
+  printf 'api=%s\nweb=%s\n' "$api_id" "$web_id" | atomic_write_file "$PREVIOUS_IMAGES_FILE"
+}
+
+read_previous_images() {
+  local file="${1:-$PREVIOUS_IMAGES_FILE}"
+  [[ -f "$file" ]] || return 1
+  local api_id="" web_id="" line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      api) api_id="$value" ;;
+      web) web_id="$value" ;;
+    esac
+  done < "$file"
+  api_id="$(normalize_image_id "$api_id" || true)"
+  web_id="$(normalize_image_id "$web_id" || true)"
+  if [[ -z "$api_id" || -z "$web_id" ]]; then
     return 1
   fi
-  if [[ "${ROLLBACK_IMAGE_CHECK:-}" == "ok" ]]; then
+  ROLLBACK_API_ID="$api_id"
+  ROLLBACK_WEB_ID="$web_id"
+  return 0
+}
+
+record_previous_images() {
+  local api_id="" web_id=""
+  api_id="$(normalize_image_id "$(running_compose_image_id api || true)" || true)"
+  web_id="$(normalize_image_id "$(running_compose_image_id web || true)" || true)"
+  if [[ -z "$api_id" || -z "$web_id" ]]; then
+    echo "Could not record running API/Web image IDs; automatic rollback will be skipped if this rollout fails." >&2
+    return 1
+  fi
+  write_previous_images "$api_id" "$web_id"
+  echo "Recorded running image IDs for rollback: api=${api_id} web=${web_id}" >&2
+  return 0
+}
+
+print_missing_rollback_image_help() {
+  local api_id="${1:-unknown}"
+  local web_id="${2:-unknown}"
+  cat >&2 <<EOF
+Rollback failed: recorded API/Web image IDs are not present locally.
+Do not docker pull a git SHA tag; a CD retry can republish that tag as a different image.
+
+Recorded:
+  api=${api_id}
+  web=${web_id}
+
+If these images were preserved with a local pin (for example rollback-pre-s3-20261109):
+  ./deploy/rollback.sh --local-tag rollback-pre-s3-20261109
+
+Or pass the exact local image IDs:
+  ./deploy/rollback.sh --api-id ${api_id} --web-id ${web_id}
+EOF
+}
+
+print_legacy_previous_sha_help() {
+  local tag=""
+  tag="$(tr -d '[:space:]' < "$PREVIOUS_SHA_FILE" 2>/dev/null || true)"
+  cat >&2 <<EOF
+No recorded API/Web image IDs in ${PREVIOUS_IMAGES_FILE}.
+A legacy tag file ${PREVIOUS_SHA_FILE} contains: ${tag:-empty}
+
+Do not docker pull that git SHA tag. A CD retry can republish it as a different image.
+
+Restore a verified local pin instead, for example:
+  ./deploy/rollback.sh --local-tag rollback-pre-s3-20261109
+
+Or pass the exact local image IDs:
+  ./deploy/rollback.sh --api-id sha256:<api-id> --web-id sha256:<web-id>
+EOF
+}
+
+image_id_exists_locally() {
+  local id="$1"
+  case "${ROLLBACK_IMAGE_CHECK:-}" in
+    missing)
+      echo "Rollback target images are not available for ${id}." >&2
+      return 1
+      ;;
+    ok)
+      return 0
+      ;;
+  esac
+  if [[ -n "${LOCAL_IMAGE_IDS:-}" ]]; then
+    case " ${LOCAL_IMAGE_IDS} " in
+      *" ${id} "*) return 0 ;;
+      *) return 1 ;;
+    esac
+  fi
+  docker image inspect "$id" >/dev/null 2>&1
+}
+
+inspect_local_image_id() {
+  local ref="$1"
+  if [[ -n "${LOCAL_TAG_API_ID:-}" && "$ref" == *"/api:"* ]]; then
+    printf '%s\n' "${LOCAL_TAG_API_ID}"
     return 0
   fi
-  if docker image inspect "${api_base}:${tag}" "${web_base}:${tag}" >/dev/null 2>&1; then
+  if [[ -n "${LOCAL_TAG_WEB_ID:-}" && "$ref" == *"/web:"* ]]; then
+    printf '%s\n' "${LOCAL_TAG_WEB_ID}"
     return 0
   fi
-  echo "Rollback target ${api_base}:${tag} / ${web_base}:${tag} not local; pulling"
-  docker pull "${api_base}:${tag}"
-  docker pull "${web_base}:${tag}"
+  docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null
+}
+
+tag_local_image() {
+  local id="$1"
+  local ref="$2"
+  if [[ "${DOCKER_TAG_STUB:-}" == "ok" ]]; then
+    echo "Tagged ${id} as ${ref} (local only)" >&2
+    return 0
+  fi
+  docker tag "$id" "$ref"
+}
+
+require_local_rollback_images() {
+  local api_id="$1"
+  local web_id="$2"
+  if image_id_exists_locally "$api_id" && image_id_exists_locally "$web_id"; then
+    return 0
+  fi
+  print_missing_rollback_image_help "$api_id" "$web_id"
+  return 1
+}
+
+restore_local_image_refs() {
+  local api_ref="$1"
+  local web_ref="$2"
+  upsert_env API_IMAGE "$api_ref"
+  upsert_env WEB_IMAGE "$web_ref"
+  load_env
+  require_deploy_safety
+  local services=()
+  mapfile -t services < <(app_services)
+  echo "Restoring local images without pulling: ${api_ref} ${web_ref}"
+  echo "Host Nginx and host PostgreSQL are not managed by Compose"
+  compose up -d --no-deps --no-build --pull never "${services[@]}"
+}
+
+restore_images_from_ids() {
+  local api_id="$1"
+  local web_id="$2"
+  api_id="$(normalize_image_id "$api_id")"
+  web_id="$(normalize_image_id "$web_id")"
+  require_local_rollback_images "$api_id" "$web_id" || return 1
+  local api_repo web_repo
+  api_repo="$(image_repository "${API_IMAGE}")"
+  web_repo="$(image_repository "${WEB_IMAGE}")"
+  tag_local_image "$api_id" "${api_repo}:${LOCAL_ROLLBACK_TAG}"
+  tag_local_image "$web_id" "${web_repo}:${LOCAL_ROLLBACK_TAG}"
+  restore_local_image_refs "${api_repo}:${LOCAL_ROLLBACK_TAG}" "${web_repo}:${LOCAL_ROLLBACK_TAG}"
+}
+
+resolve_local_tag_image_ids() {
+  local tag="$1"
+  local api_repo web_repo api_id web_id
+  api_repo="$(image_repository "${API_IMAGE}")"
+  web_repo="$(image_repository "${WEB_IMAGE}")"
+  api_id="$(normalize_image_id "$(inspect_local_image_id "${api_repo}:${tag}" || true)" || true)"
+  web_id="$(normalize_image_id "$(inspect_local_image_id "${web_repo}:${tag}" || true)" || true)"
+  if [[ -z "$api_id" || -z "$web_id" ]]; then
+    echo "Local rollback tag '${tag}' is not present for both API and Web. Refusing to pull it from a registry." >&2
+    echo "Inspect local images, then retag the verified pair or pass --api-id/--web-id." >&2
+    return 1
+  fi
+  ROLLBACK_API_ID="$api_id"
+  ROLLBACK_WEB_ID="$web_id"
+  ROLLBACK_API_REF="${api_repo}:${tag}"
+  ROLLBACK_WEB_REF="${web_repo}:${tag}"
+  return 0
 }
 
 health_sleep() {

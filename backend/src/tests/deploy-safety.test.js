@@ -161,8 +161,10 @@ test('deploy.sh validates VPS safety after load_env and backups before migrate',
   const vpsEnv = read('deploy/.env.vps.example');
 
   assert.match(deploy, /load_env\r?\nrequire_deploy_safety/);
+  assert.match(deploy, /compose pull/);
+  assert.doesNotMatch(deploy, /rollback\.sh "\$previous"/);
   assert.match(deploy, /Backing up PostgreSQL before changing application images/);
-  assert.match(deploy, /deploy\/backup\.sh[\s\S]*Applying forward-only migrations/);
+  assert.match(deploy, /backup\.sh[\s\S]*Applying forward-only migrations/);
   assert.match(deploy, /require_deploy_user/);
   assert.match(lib, /id -un/);
   assert.match(lib, /Expected \$\{expected\}/);
@@ -193,9 +195,21 @@ test('deploy.sh validates VPS safety after load_env and backups before migrate',
   assert.match(health, /run_check "api ready"/);
   assert.match(health, /wait_for_http_check/);
   assert.match(deploy, /record_previous_tag/);
+  assert.match(deploy, /record_previous_images/);
   assert.match(deploy, /record_deployed_tag/);
+  assert.match(deploy, /rollback\.sh" --from-failure/);
   assert.match(deploy, /No previous verified image to restore/);
+  assert.match(lib, /record_previous_images/);
+  assert.match(lib, /PREVIOUS_IMAGES_FILE/);
   assert.match(lib, /atomic_write/);
+  const rollback = read('deploy/rollback.sh');
+  assert.match(rollback, /--local-tag/);
+  assert.match(rollback, /Refusing rollback by mutable git commit tag/);
+  assert.match(lib, /--pull never/);
+  assert.match(lib, /restore_images_from_ids/);
+  assert.doesNotMatch(rollback, /^\s*docker pull\b/m);
+  assert.doesNotMatch(rollback, /deploy\.sh/);
+  assert.doesNotMatch(lib, /^\s*docker pull\b/m);
   assert.match(lib, /HEALTH_ATTEMPTS/);
   assert.match(vpsEnv, /RETENTION_WORKER_ENABLED=0/);
   assert.match(vpsEnv, /CHAT_ATTACHMENTS_ENABLED=false/);

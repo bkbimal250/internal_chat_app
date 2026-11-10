@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  FILE_UPLOAD_CONCURRENCY,
+  MAX_ATTACHMENT_BATCH,
+  MAX_PENDING_UPLOADS,
+  MAX_ZIP_BYTES,
+  MULTIPART_CONCURRENCY,
   MULTIPART_PART_SIZE,
   SINGLE_PUT_MAX_BYTES,
   TWO_GIB,
@@ -27,6 +32,15 @@ test('planUpload can force multipart for tests and 2 GiB files', () => {
   const large = planUpload(TWO_GIB);
   assert.equal(large.mode, 'multipart');
   assert.equal(large.partCount, TWO_GIB / MULTIPART_PART_SIZE);
+});
+
+test('batch upload defaults stay within S3 multipart rules', () => {
+  assert.equal(MAX_ATTACHMENT_BATCH, 50);
+  assert.equal(MAX_PENDING_UPLOADS, 60);
+  assert.equal(MAX_ZIP_BYTES, 10 * 1024 * 1024 * 1024);
+  assert.equal(MULTIPART_CONCURRENCY, 3);
+  assert.equal(FILE_UPLOAD_CONCURRENCY, 3);
+  assert.equal(MULTIPART_PART_SIZE >= 5 * 1024 * 1024, true);
 });
 
 test('assertPartNumbers and normalizeParts reject gaps and extra etags', () => {

@@ -1,4 +1,4 @@
-import { TWO_GIB } from '../../services/upload-plan.js';
+import { MAX_ATTACHMENT_BATCH, TWO_GIB } from '../../services/upload-plan.js';
 import { attachmentsController } from './attachments.controller.js';
 
 const id = { type: 'string', format: 'uuid' };
@@ -32,6 +32,71 @@ export default async function attachmentRoutes(app, config) {
       },
     },
     controller.init,
+  );
+  app.post(
+    '/api/v1/conversations/:id/attachments/complete',
+    {
+      preHandler: auth,
+      config: rate,
+      schema: {
+        params: obj({ id }),
+        body: obj(
+          {
+            clientMessageId: id,
+            caption: { type: 'string', maxLength: 4000 },
+            replyToMessageId: id,
+            items: {
+              type: 'array',
+              minItems: 1,
+              maxItems: MAX_ATTACHMENT_BATCH,
+              items: obj(
+                {
+                  id,
+                  checksumSha256: { type: 'string', minLength: 64, maxLength: 64, pattern: '^[a-fA-F0-9]{64}$' },
+                  parts: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 10000,
+                    items: obj(
+                      {
+                        partNumber: { type: 'integer', minimum: 1, maximum: 10000 },
+                        etag: { type: 'string', minLength: 1, maxLength: 200 },
+                      },
+                      ['partNumber', 'etag'],
+                    ),
+                  },
+                },
+                ['id'],
+              ),
+            },
+          },
+          ['clientMessageId', 'items'],
+        ),
+      },
+    },
+    controller.completeBatch,
+  );
+  app.post(
+    '/api/v1/conversations/:id/attachments/zip',
+    {
+      preHandler: auth,
+      config: rate,
+      schema: {
+        params: obj({ id }),
+        body: obj(
+          {
+            ids: {
+              type: 'array',
+              minItems: 1,
+              maxItems: MAX_ATTACHMENT_BATCH,
+              items: id,
+            },
+          },
+          ['ids'],
+        ),
+      },
+    },
+    controller.zip,
   );
   app.post(
     '/api/v1/attachments/:id/parts',

@@ -14,7 +14,7 @@ void main() {
   test('runPool keeps bounded concurrency and all results', () async {
     var inflight = 0;
     var maxInflight = 0;
-    final result = await runPool<int>([1, 2, 3, 4, 5], 2, (item) async {
+    final result = await runPool<int, int>([1, 2, 3, 4, 5], 2, (item) async {
       inflight += 1;
       if (inflight > maxInflight) maxInflight = inflight;
       await Future<void>.delayed(const Duration(milliseconds: 20));

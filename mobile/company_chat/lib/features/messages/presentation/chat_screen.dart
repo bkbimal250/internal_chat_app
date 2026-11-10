@@ -8,11 +8,13 @@ import 'package:company_chat/core/network/public_url.dart';
 import 'package:company_chat/core/notifications/notification_prefs.dart';
 import 'package:company_chat/core/theme/app_colors.dart';
 import 'package:company_chat/core/utils/preview_text.dart';
+import 'package:company_chat/core/utils/typing_label.dart';
 import 'package:company_chat/core/utils/time_format.dart';
 import 'package:company_chat/core/widgets/user_avatar.dart';
 import 'package:company_chat/features/auth/presentation/auth_controller.dart';
 import 'package:company_chat/features/calls/call_providers.dart';
 import 'package:company_chat/features/conversations/presentation/conversations_controller.dart';
+import 'package:company_chat/features/media/media_batch.dart';
 import 'package:company_chat/features/media/media_download.dart';
 import 'package:company_chat/features/media/media_limits.dart';
 import 'package:company_chat/features/media/media_prepare.dart';
@@ -47,6 +49,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _emoji = false;
   bool _recording = false;
   Duration _recordElapsed = Duration.zero;
+  List<SelectedMedia> _drafts = [];
   Timer? _typingStop;
   Timer? _recordTick;
 
@@ -64,6 +67,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _recordTick?.cancel();
     _recorder.dispose();
     _composer.dispose();
+    ref.read(viewedConversationProvider.notifier).state = null;
     super.dispose();
   }
 
@@ -84,9 +88,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     });
     final conversations = ref.watch(conversationsControllerProvider);
     final me = ref.watch(authControllerProvider).user?.id;
-    final typing = ref.watch(typingProvider)[widget.conversationId] ?? {};
     final conversation = conversations.items.where((row) => row['id'] == widget.conversationId).firstOrNull ??
         state.details;
+    final typingIds = ref.watch(typingProvider)[widget.conversationId] ?? {};
+    final typing = remoteTypingLabel(
+      userIds: typingIds,
+      members: (conversation?['members'] as List?) ?? const [],
+      currentUserId: me,
+    );
     final title = conversation == null
         ? 'Chat'
         : ref.read(conversationsControllerProvider.notifier).titleOf(conversation);
@@ -130,7 +139,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     Text(title, overflow: TextOverflow.ellipsis),
                     Text(
                       typing.isNotEmpty
-                          ? 'typing…'
+                          ? typing
                           : !isGroup && online.contains(peer?['id'])
                               ? 'online'
                               : isGroup
@@ -271,6 +280,58 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ),
               ),
             ),
+            if (_drafts.isNotEmpty)
+              SizedBox(
+                height: 88,
+                child: ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _drafts.length,
+                  separatorBuilder: (context, index) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) {
+                    final item = _drafts[index];
+                    return Stack(
+                      children: [
+                        Container(
+                          width: 72,
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: AppColors.muted,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                item.media.kind == 'image'
+                                    ? Icons.image_outlined
+                                    : item.media.kind == 'video'
+                                        ? Icons.videocam_outlined
+                                        : item.media.kind == 'audio'
+                                            ? Icons.audiotrack
+                                            : Icons.insert_drive_file_outlined,
+                                size: 18,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(item.media.fileName, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10)),
+                              Text(formatMediaSize(item.media.sizeBytes), style: const TextStyle(fontSize: 9, color: AppColors.mutedForeground)),
+                            ],
+                          ),
+                        ),
+                        Positioned(
+                          top: -8,
+                          right: -8,
+                          child: IconButton(
+                            iconSize: 16,
+                            onPressed: () => setState(() => _drafts = [..._drafts]..removeAt(index)),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
             if (state.replyTo != null || state.editing != null)
               Container(
                 color: AppColors.muted,
@@ -376,11 +437,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _send(MessagesController controller) async {
-    final text = _composer.text;
-    _composer.clear();
     _typingStop?.cancel();
     controller.typing(false);
+    if (_drafts.isNotEmpty) {
+      final media = _drafts.map((item) => item.media).toList();
+      final caption = _composer.text.trim();
+      try {
+        await controller.sendAttachments(media, caption: caption.isEmpty ? null : caption);
+        _composer.clear();
+        if (mounted) setState(() => _drafts = []);
+      } catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+        }
+      }
+      return;
+    }
+    final text = _composer.text;
+    _composer.clear();
     await controller.send(text);
+  }
+
+  void _queueMedia(Iterable<PreparedMedia> incoming) {
+    final result = addSelectedMedia(_drafts, incoming);
+    setState(() => _drafts = result.items);
+    if (result.errors.isNotEmpty && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result.errors.first)));
+    }
   }
 
   String _formatElapsed(Duration value) {
@@ -432,8 +515,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _sendPrepared(MessagesController controller, PreparedMedia media) async {
-    await controller.sendAttachment(media, caption: _composer.text.trim());
-    _composer.clear();
+    _queueMedia([media]);
   }
 
   Future<void> _attach(MessagesController controller) async {
@@ -445,29 +527,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       if (choice.kind == 'document') {
         final picked = await FilePicker.platform.pickFiles(
           withData: false,
+          allowMultiple: true,
           type: FileType.custom,
           allowedExtensions: const ['pdf', 'docx', 'xlsx', 'pptx', 'zip', 'txt'],
         );
-        final file = picked?.files.single;
-        if (file?.path == null) return;
-        await _sendPrepared(
-          controller,
-          await prepareFile(fileName: file!.name, mimeType: mimeFromName(file.name), path: file.path),
-        );
+        final files = picked?.files.where((file) => file.path != null).toList() ?? [];
+        if (files.isEmpty) return;
+        final prepared = <PreparedMedia>[];
+        for (final file in files) {
+          prepared.add(await prepareFile(fileName: file.name, mimeType: mimeFromName(file.name), path: file.path));
+        }
+        _queueMedia(prepared);
         return;
       }
       if (choice.kind == 'audio') {
-        final picked = await FilePicker.platform.pickFiles(withData: false, type: FileType.audio);
-        final file = picked?.files.single;
-        if (file?.path == null) return;
-        await _sendPrepared(
-          controller,
-          await prepareFile(
-            fileName: file!.name,
-            mimeType: mimeFromName(file.name, file.extension == 'm4a' ? 'audio/mp4' : null),
-            path: file.path,
-          ),
-        );
+        final picked = await FilePicker.platform.pickFiles(withData: false, allowMultiple: true, type: FileType.audio);
+        final files = picked?.files.where((file) => file.path != null).toList() ?? [];
+        if (files.isEmpty) return;
+        final prepared = <PreparedMedia>[];
+        for (final file in files) {
+          prepared.add(
+            await prepareFile(
+              fileName: file.name,
+              mimeType: mimeFromName(file.name, file.extension == 'm4a' ? 'audio/mp4' : null),
+              path: file.path,
+            ),
+          );
+        }
+        _queueMedia(prepared);
         return;
       }
       if (choice.kind == 'camera') {
@@ -491,16 +578,19 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         return;
       }
       if (choice.kind == 'media') {
-        final picked = await ImagePicker().pickMedia();
-        if (picked == null) return;
-        final mime = picked.mimeType ?? mimeFromName(picked.name);
-        final isVideo = mime.startsWith('video') || ['.mp4', '.mov', '.webm', '.3gp'].contains(p.extension(picked.name).toLowerCase());
-        await _sendPrepared(
-          controller,
-          isVideo
-              ? await prepareVideo(path: picked.path, fileName: picked.name, quality: quality)
-              : await prepareImage(path: picked.path, fileName: picked.name, mimeType: mime, quality: quality),
-        );
+        final picked = await ImagePicker().pickMultipleMedia();
+        if (picked.isEmpty) return;
+        final prepared = <PreparedMedia>[];
+        for (final file in picked) {
+          final mime = file.mimeType ?? mimeFromName(file.name);
+          final isVideo = mime.startsWith('video') || ['.mp4', '.mov', '.webm', '.3gp'].contains(p.extension(file.name).toLowerCase());
+          prepared.add(
+            isVideo
+                ? await prepareVideo(path: file.path, fileName: file.name, quality: quality)
+                : await prepareImage(path: file.path, fileName: file.name, mimeType: mime, quality: quality),
+          );
+        }
+        _queueMedia(prepared);
       }
     } on MediaLimitException catch (error) {
       if (mounted) {
@@ -639,10 +729,10 @@ class _Bubble extends StatelessWidget {
                         sender['displayName'] as String? ?? '',
                         style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF047857)),
                       ),
-                    if (message['deletedAt'] == null && message['attachment'] is Map)
+                    if (message['deletedAt'] == null && messageAttachments(message).isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(bottom: 6),
-                        child: _AttachmentThumb(attachment: Map<String, dynamic>.from(message['attachment'] as Map)),
+                        child: _AttachmentAlbum(files: messageAttachments(message)),
                       ),
                     if (showText)
                       Text(
@@ -689,6 +779,60 @@ class _Bubble extends StatelessWidget {
             ),
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _AttachmentAlbum extends StatelessWidget {
+  const _AttachmentAlbum({required this.files});
+
+  final List<Map<String, dynamic>> files;
+
+  @override
+  Widget build(BuildContext context) {
+    if (files.length == 1) {
+      return _AttachmentThumb(attachment: files.first);
+    }
+    final visuals = files.where((file) => file['kind'] == 'image' || file['kind'] == 'video').toList();
+    final others = files.where((file) => file['kind'] != 'image' && file['kind'] != 'video').toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (visuals.isNotEmpty)
+          SizedBox(
+            width: 240,
+            child: GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: visuals.length > 4 ? 4 : visuals.length,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                mainAxisSpacing: 4,
+                crossAxisSpacing: 4,
+              ),
+              itemBuilder: (context, index) {
+                final extra = visuals.length - 4;
+                return Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    FittedBox(fit: BoxFit.cover, child: _AttachmentThumb(attachment: visuals[index])),
+                    if (index == 3 && extra > 0)
+                      Container(
+                        color: Colors.black54,
+                        alignment: Alignment.center,
+                        child: Text('+$extra', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ),
+        for (final file in others)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: _AttachmentThumb(attachment: file),
+          ),
       ],
     );
   }
@@ -742,7 +886,7 @@ class _AttachmentThumbState extends ConsumerState<_AttachmentThumb> {
   @override
   Widget build(BuildContext context) {
     final kind = widget.attachment['kind'] as String? ?? '';
-    final name = widget.attachment['originalName'] as String? ?? 'File';
+    final name = widget.attachment['displayName'] as String? ?? 'File';
     if (kind == 'image' && _url != null) {
       return GestureDetector(
         onTap: () {

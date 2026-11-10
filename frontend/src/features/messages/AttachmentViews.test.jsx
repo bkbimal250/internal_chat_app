@@ -13,7 +13,7 @@ describe('attachment views', () => {
     attachmentsApi.url.mockReset()
     attachmentsApi.url.mockResolvedValue({
       url: 'https://storage.test/get?X-Amz-Signature=test',
-      fileName: 'pixel.png',
+      fileName: 'MiChat Image 2026-11-10 at 5.42.14 PM.png',
       mimeType: 'image/png',
       inline: true,
     })
@@ -41,7 +41,7 @@ describe('attachment views', () => {
           id: 'att-1',
           kind: 'image',
           status: 'available',
-          originalName: 'pixel.png',
+          displayName: 'MiChat Image 2026-11-10 at 5.42.14 PM.png',
           mimeType: 'image/png',
           sizeBytes: 4,
         }}
@@ -56,7 +56,7 @@ describe('attachment views', () => {
     const { downloadAttachment } = await import('./AttachmentViews')
     await downloadAttachment({
       id: 'att-1',
-      originalName: 'pixel.png',
+      displayName: 'MiChat Image 2026-11-10 at 5.42.14 PM.png',
       mimeType: 'image/png',
       sizeBytes: 4,
     })

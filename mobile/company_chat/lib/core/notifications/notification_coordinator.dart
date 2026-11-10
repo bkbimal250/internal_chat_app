@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:company_chat/app/providers.dart';
 import 'package:company_chat/core/notifications/in_app_banner.dart';
+import 'package:company_chat/core/notifications/notify_incoming.dart';
 import 'package:company_chat/core/notifications/notification_copy.dart';
 import 'package:company_chat/core/notifications/notification_prefs.dart';
 import 'package:company_chat/core/notifications/pending_route.dart';
@@ -10,7 +11,6 @@ import 'package:company_chat/core/utils/preview_text.dart';
 import 'package:company_chat/features/auth/presentation/auth_controller.dart';
 import 'package:company_chat/features/conversations/presentation/conversations_controller.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -23,7 +23,7 @@ class NotificationHost extends ConsumerStatefulWidget {
   ConsumerState<NotificationHost> createState() => _NotificationHostState();
 }
 
-class _NotificationHostState extends ConsumerState<NotificationHost> {
+class _NotificationHostState extends ConsumerState<NotificationHost> with WidgetsBindingObserver {
   StreamSubscription<Map<String, dynamic>>? _sub;
   InAppNotice? _notice;
   Timer? _hide;
@@ -32,12 +32,19 @@ class _NotificationHostState extends ConsumerState<NotificationHost> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     PushNotifications.onForegroundData = _fromPush;
     _sub = ref.read(chatSocketProvider).events.listen(_fromSocket);
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    ref.read(appLifecycleProvider.notifier).state = state;
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     if (PushNotifications.onForegroundData == _fromPush) {
       PushNotifications.onForegroundData = null;
     }
@@ -124,14 +131,18 @@ class _NotificationHostState extends ConsumerState<NotificationHost> {
   }
 
   void _present(InAppNotice notice, String? id) {
-    if (notice.conversationId.isEmpty) return;
-    if (id != null && id.isNotEmpty && !_seen.add(id)) return;
-    final viewing = ref.read(viewedConversationProvider) == notice.conversationId;
-    final prefs = ref.read(notificationPrefsProvider);
-    if (viewing) {
-      if (prefs.sound) SystemSound.play(SystemSoundType.click);
+    if (!shouldPresentIncomingNotice(
+      senderId: notice.senderId,
+      currentUserId: ref.read(authControllerProvider).user?.id,
+      conversationId: notice.conversationId,
+      viewedConversationId: ref.read(viewedConversationProvider),
+      lifecycle: ref.read(appLifecycleProvider),
+      messageId: id,
+      seenIds: _seen,
+    )) {
       return;
     }
+    final prefs = ref.read(notificationPrefsProvider);
     if (!prefs.messagesEnabled || prefs.isMuted(notice.conversationId)) return;
     setState(() => _notice = notice);
     _hide?.cancel();

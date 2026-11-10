@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadEnv } from '../config/env.js';
-import { publicAttachment, attachmentsService } from '../modules/attachments/attachments.service.js';
+import { batchMessageType, presentAttachments, publicAttachment, attachmentsService } from '../modules/attachments/attachments.service.js';
+import { MAX_ATTACHMENT_BATCH, MAX_PENDING_UPLOADS } from '../services/upload-plan.js';
 import { createStorageKey } from '../services/object-storage.service.js';
 
 const secret = 'foundation-test-only-secret-'.repeat(4);
@@ -17,11 +18,28 @@ test('publicAttachment never includes storage keys or bucket paths', () => {
     checksumSha256: 'abc',
     storageKey: 'att/2026/11/should-not-leak',
     multipartUploadId: 'upload-id',
+    createdAt: new Date('2026-11-10T12:12:14.000Z'),
   });
   assert.equal(presented.storageKey, undefined);
   assert.equal(presented.multipartUploadId, undefined);
+  assert.equal(presented.originalName, undefined);
+  assert.equal(presented.displayName, 'MiChat Image 2026-11-10 at 5.42.14 PM.png');
   assert.equal(JSON.stringify(presented).includes('att/'), false);
+  assert.equal(JSON.stringify(presented).includes('pixel.png'), false);
   assert.equal(presented.status, 'available');
+});
+
+test('presentAttachments preserves order and keeps a legacy singular attachment', () => {
+  const presented = presentAttachments([
+    { id: 'a', originalName: 'one.png', mimeType: 'image/png', sizeBytes: 1, kind: 'image', status: 'available', sortOrder: 0 },
+    { id: 'b', originalName: 'two.png', mimeType: 'image/png', sizeBytes: 1, kind: 'image', status: 'available', sortOrder: 1 },
+  ]);
+  assert.equal(presented.attachment.id, 'a');
+  assert.equal(presented.attachments.map((row) => row.id).join(','), 'a,b');
+  assert.equal(batchMessageType(['image', 'image']), 'image');
+  assert.equal(batchMessageType(['image', 'video']), 'file');
+  assert.equal(MAX_ATTACHMENT_BATCH, 50);
+  assert.equal(MAX_PENDING_UPLOADS, 60);
 });
 
 test('attachment objects use the att/ prefix rather than the smoke-test prefix', () => {

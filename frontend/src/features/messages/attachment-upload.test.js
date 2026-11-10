@@ -5,6 +5,7 @@ const attachmentsApi = {
   signParts: vi.fn(),
   parts: vi.fn(),
   finalize: vi.fn(),
+  completeBatch: vi.fn(),
   remove: vi.fn(),
 }
 
@@ -70,6 +71,7 @@ describe('uploadAttachment', () => {
     attachmentsApi.signParts.mockReset()
     attachmentsApi.parts.mockReset()
     attachmentsApi.finalize.mockReset()
+    attachmentsApi.completeBatch.mockReset()
     attachmentsApi.remove.mockReset()
   })
 
@@ -176,5 +178,38 @@ describe('uploadAttachment', () => {
     await expect(uploadAttachment({ conversationId: 'conv-1', file })).rejects.toThrow(/Upload failed/)
     expect(attachmentsApi.finalize).not.toHaveBeenCalled()
     expect(FakeXHR.sent).toBe(4)
+  })
+
+  it('uploads storage objects without creating a message until completeBatch', async () => {
+    const { uploadToStorage, completeAttachmentBatch } = await import('./attachment-upload')
+    attachmentsApi.init.mockResolvedValue({
+      id: 'att-6',
+      mode: 'single',
+      uploadUrl: 'https://storage.test/put',
+      headers: {},
+    })
+    attachmentsApi.completeBatch.mockResolvedValue({
+      id: 'msg-batch',
+      attachments: [
+        { id: 'att-6', status: 'available' },
+        { id: 'att-7', status: 'available' },
+      ],
+    })
+    const file = new File([new Uint8Array(8)], 'pixel.png', { type: 'image/png' })
+    const stored = await uploadToStorage({ conversationId: 'conv-1', file })
+    expect(stored.init.id).toBe('att-6')
+    expect(attachmentsApi.finalize).not.toHaveBeenCalled()
+    const message = await completeAttachmentBatch({
+      conversationId: 'conv-1',
+      clientMessageId: 'client-1',
+      items: [{ id: 'att-6' }, { id: 'att-7' }],
+    })
+    expect(message.attachments).toHaveLength(2)
+    expect(attachmentsApi.completeBatch).toHaveBeenCalledWith('conv-1', {
+      clientMessageId: 'client-1',
+      caption: undefined,
+      replyToMessageId: undefined,
+      items: [{ id: 'att-6' }, { id: 'att-7' }],
+    })
   })
 })

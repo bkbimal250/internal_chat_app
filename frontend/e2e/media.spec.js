@@ -27,6 +27,8 @@ test('authorized employees can upload and download an image attachment', async (
 
   await expect(alpha.getByTestId('attach-menu')).toBeVisible()
   await alpha.getByTestId('attachment-input').setInputFiles(filePath)
+  await expect(alpha.getByTestId('attachment-draft-tray')).toBeVisible()
+  await alpha.getByTestId('send-message').click()
   await expect(alpha.getByTestId('attachment-image')).toBeVisible({ timeout: 30_000 })
   await expect(bravo.getByTestId('attachment-image')).toBeVisible({ timeout: 30_000 })
   await alpha.getByTestId('attachment-image').click()

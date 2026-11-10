@@ -75,6 +75,13 @@ function withoutPresignedUrls(payload) {
     delete attachment.storageKey;
     copy.attachment = attachment;
   }
+  if (Array.isArray(copy.attachments)) {
+    copy.attachments = copy.attachments.map((file) => {
+      const attachment = { ...file };
+      delete attachment.storageKey;
+      return attachment;
+    });
+  }
   return copy;
 }
 
@@ -508,6 +515,94 @@ test(
       payload: { clientMessageId: randomUUID() },
     });
     assert.ok([409, 410, 404].includes(stale.statusCode));
+
+    const tooMany = await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversationId}/attachments/complete`,
+      headers: header(sessionA),
+      payload: {
+        clientMessageId: randomUUID(),
+        items: Array.from({ length: 51 }, () => ({ id: randomUUID() })),
+      },
+    });
+    assertStatus(tooMany, 400);
+
+    async function putPending(name) {
+      const started = await app.inject({
+        method: 'POST',
+        url: `/api/v1/conversations/${conversationId}/attachments`,
+        headers: header(sessionA),
+        payload: { fileName: name, mimeType: 'image/png', sizeBytes: PNG.length },
+      });
+      assertStatus(started, 201);
+      const uploadedObject = await fetch(started.json().uploadUrl, {
+        method: 'PUT',
+        headers: started.json().headers,
+        body: PNG,
+      });
+      assert.ok(uploadedObject.ok);
+      return started.json();
+    }
+    const first = await putPending('album-1.png');
+    const second = await putPending('album-2.png');
+    const batchId = randomUUID();
+    const batched = await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversationId}/attachments/complete`,
+      headers: header(sessionA),
+      payload: {
+        clientMessageId: batchId,
+        caption: 'two photos',
+        items: [{ id: first.id }, { id: second.id }],
+      },
+    });
+    assertStatus(batched, 201);
+    assert.equal(batched.json().attachments.length, 2);
+    assert.equal(batched.json().attachments[0].id, first.id);
+    assert.equal(batched.json().attachments[1].id, second.id);
+    assert.equal(batched.json().attachment.id, first.id);
+    assertNoSecrets(batched.json(), config);
+    assert.equal(batched.json().attachment.originalName, undefined);
+    assert.equal(String(batched.json().attachment.displayName).startsWith('MiChat '), true);
+    assert.equal(JSON.stringify(batched.json()).includes('album-1.png'), false);
+    const zip = await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversationId}/attachments/zip`,
+      headers: header(sessionB),
+      payload: { ids: [first.id, second.id] },
+    });
+    assertStatus(zip, 200);
+    assert.equal(String(zip.headers['content-type'] || '').includes('zip'), true);
+    const zipBytes = Buffer.from(zip.rawPayload || zip.payload || []);
+    assert.equal(zipBytes.subarray(0, 2).toString(), 'PK');
+    assert.equal(zipBytes.includes(Buffer.from('MiChat Image')), true);
+    assert.equal(zipBytes.includes(Buffer.from('album-1.png')), false);
+    const zipForbidden = await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversationId}/attachments/zip`,
+      headers: header(sessionB),
+      payload: { ids: [randomUUID()] },
+    });
+    assertStatus(zipForbidden, 403);
+    const batchEvent = await waitEvent(socketB, 'message.created', (event) => event.data.id === batched.json().id);
+    assert.equal(batchEvent.data.attachments.length, 2);
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/v1/conversations/${conversationId}/attachments/complete`,
+      headers: header(sessionA),
+      payload: {
+        clientMessageId: batchId,
+        items: [{ id: first.id }, { id: second.id }],
+      },
+    });
+    assertStatus(replay, 200);
+    assert.equal(replay.json().duplicate, true);
+    assert.equal(replay.json().id, batched.json().id);
+    const outsider = await app.inject({
+      method: 'GET',
+      url: `/api/v1/attachments/${first.id}/url`,
+    });
+    assertStatus(outsider, 401);
 
     const removed = await app.inject({
       method: 'DELETE',

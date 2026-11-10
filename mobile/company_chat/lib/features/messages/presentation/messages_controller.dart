@@ -8,6 +8,7 @@ import 'package:company_chat/features/auth/presentation/auth_controller.dart';
 import 'package:company_chat/features/media/media_limits.dart';
 import 'package:company_chat/features/media/media_prepare.dart';
 import 'package:company_chat/features/media/media_upload.dart';
+import 'package:company_chat/features/media/transfer_runtime.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
@@ -279,6 +280,84 @@ class MessagesController extends StateNotifier<MessagesState> {
       if (error is MediaLimitException && error.message.contains('cancelled')) return;
       _upsert({...draft, 'pending': false, 'failed': true});
       await _ref.read(databaseProvider).upsertMessage({...draft, 'pending': false, 'failed': true});
+      rethrow;
+    } finally {
+      if (identical(_uploadCancel, cancel)) _uploadCancel = null;
+    }
+  }
+
+  Future<void> sendAttachments(List<PreparedMedia> media, {String? caption}) async {
+    if (media.isEmpty) return;
+    if (media.length == 1) {
+      await sendAttachment(media.first, caption: caption);
+      return;
+    }
+    _uploadCancel?.cancel();
+    final cancel = CancelToken();
+    _uploadCancel = cancel;
+    state = state.copyWith(
+      uploading: true,
+      uploadProgress: 0,
+      uploadLabel: 'Uploading ${media.length} files',
+      clearEta: true,
+    );
+    final clientMessageId = const Uuid().v4();
+    final uploader = MediaUploader(_api);
+    try {
+      final stored = await runPool(List.generate(media.length, (index) => index), fileUploadConcurrency, (index) async {
+        final item = media[index];
+        return uploader.uploadToStorage(
+          conversationId: conversationId,
+          path: item.path,
+          fileName: item.fileName,
+          mimeType: item.mimeType,
+          cancelToken: cancel,
+          onProgress: (progress) {
+            state = state.copyWith(
+              uploading: true,
+              uploadProgress: progress.percent,
+              uploadEta: progress.eta,
+              uploadLabel: 'File ${index + 1}/${media.length} · ${formatMediaSize(progress.sent)} of ${formatMediaSize(progress.total)}',
+            );
+          },
+        );
+      });
+      state = state.copyWith(uploadLabel: 'Finishing ${media.length} files', uploadProgress: 100);
+      final saved = await uploader.completeBatch(
+        conversationId: conversationId,
+        clientMessageId: clientMessageId,
+        caption: caption,
+        replyToMessageId: state.replyTo?['id'] as String?,
+        items: stored
+            .map((row) {
+              final parts = (row['parts'] as List?) ?? const [];
+              return {
+                'id': row['id'],
+                if (parts.isNotEmpty)
+                  'parts': parts
+                      .map((part) => {
+                            'partNumber': (part as Map)['partNumber'],
+                            'etag': part['etag'],
+                          })
+                      .toList(),
+              };
+            })
+            .toList(),
+        cancelToken: cancel,
+      );
+      state = state.copyWith(
+        clearReply: true,
+        uploading: false,
+        uploadProgress: 0,
+        uploadLabel: '',
+        clearEta: true,
+      );
+      _upsert(saved);
+      await _ref.read(databaseProvider).upsertMessage(saved);
+    } catch (error) {
+      state = state.copyWith(uploading: false, uploadProgress: 0, uploadLabel: '', clearEta: true);
+      if (error is DioException && CancelToken.isCancel(error)) return;
+      if (error is MediaLimitException && error.message.contains('cancelled')) return;
       rethrow;
     } finally {
       if (identical(_uploadCancel, cancel)) _uploadCancel = null;

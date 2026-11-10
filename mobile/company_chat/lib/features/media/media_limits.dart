@@ -1,6 +1,8 @@
 const twoGib = 2 * 1024 * 1024 * 1024;
 const singlePutMaxBytes = 8 * 1024 * 1024;
 const multipartPartSize = 8 * 1024 * 1024;
+const maxAttachmentBatch = 50;
+const maxPendingUploads = 60;
 
 class MediaSpec {
   const MediaSpec({required this.kind, required this.maxBytes, required this.compressible});

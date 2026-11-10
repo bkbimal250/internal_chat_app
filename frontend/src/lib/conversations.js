@@ -21,10 +21,20 @@ export function previewText(message) {
   if (!message) return 'No messages yet'
   if (message.deletedAt) return 'Message deleted'
   if (message.messageType === 'system') return message.content
+  const files = Array.isArray(message.attachments) && message.attachments.length
+    ? message.attachments
+    : message.attachment
+      ? [message.attachment]
+      : []
+  if (files.length > 1) {
+    const photos = files.filter((file) => file.kind === 'image').length
+    if (photos === files.length) return message.content || `${files.length} photos`
+    return message.content || `${files.length} files`
+  }
   if (message.messageType === 'image') return message.content || 'Photo'
   if (message.messageType === 'video') return message.content || 'Video'
   if (message.messageType === 'audio') return message.content || 'Audio'
-  if (message.messageType === 'file') return message.content || message.attachment?.originalName || 'File'
+  if (message.messageType === 'file') return message.content || files[0]?.displayName || 'File'
   return message.content
 }
 

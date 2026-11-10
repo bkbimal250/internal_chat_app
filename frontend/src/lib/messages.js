@@ -93,10 +93,16 @@ export function canForwardMessage(message) {
   return canReplyToMessage(message)
 }
 
+export function messageAttachments(message) {
+  if (Array.isArray(message?.attachments) && message.attachments.length) {
+    return message.attachments.filter((file) => file && file.status !== 'deleted')
+  }
+  return message?.attachment ? [message.attachment] : []
+}
+
 export function canDownloadMessage(message) {
   return Boolean(
-    message?.attachment?.id &&
-      message.attachment.status === 'available' &&
+    messageAttachments(message).some((file) => file?.id && file.status === 'available') &&
       !message.pending &&
       !message.deletedAt &&
       !message.expiredAt,

@@ -1,6 +1,7 @@
 const MEMORY = new Map()
 const STORAGE_PREFIX = 'company-chat.transfers.'
 export const MULTIPART_CONCURRENCY = 3
+export const FILE_UPLOAD_CONCURRENCY = 3
 
 export function fileFingerprint(file) {
   return {

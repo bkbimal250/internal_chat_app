@@ -48,6 +48,8 @@ export const attachmentsApi = {
   signParts: (id, body) => apiClient.post(`/api/v1/attachments/${id}/parts`, body).then((r) => r.data),
   parts: (id) => apiClient.get(`/api/v1/attachments/${id}/parts`).then((r) => r.data),
   finalize: (id, body) => apiClient.post(`/api/v1/attachments/${id}/finalize`, body).then((r) => r.data),
+  completeBatch: (conversationId, body) =>
+    apiClient.post(`/api/v1/conversations/${conversationId}/attachments/complete`, body).then((r) => r.data),
   url: (id, params) => apiClient.get(`/api/v1/attachments/${id}/url`, { params }).then((r) => r.data),
   remove: (id) => apiClient.delete(`/api/v1/attachments/${id}`).then((r) => r.data),
 }

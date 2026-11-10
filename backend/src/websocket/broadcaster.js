@@ -3,15 +3,17 @@ import { alias } from 'drizzle-orm/pg-core';
 import { conversationMembers } from '../database/schema/index.js';
 import { envelope } from './connection-manager.js';
 export const broadcaster = (app) => ({
-  async conversation(id, event, data) {
+  async conversation(id, event, data, { excludeUserId } = {}) {
     const members = await app.database.db
       .select({ userId: conversationMembers.userId })
       .from(conversationMembers)
       .where(and(eq(conversationMembers.conversationId, id), isNull(conversationMembers.leftAt)));
     const text = JSON.stringify(envelope(event, data));
-    for (const { userId } of members)
+    for (const { userId } of members) {
+      if (excludeUserId && userId === excludeUserId) continue;
       for (const c of app.connections.user(userId))
         if (c.socket.readyState === 1) c.socket.send(text);
+    }
   },
   user(id, event, data) {
     const text = JSON.stringify(envelope(event, data));

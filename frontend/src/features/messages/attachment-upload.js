@@ -2,11 +2,14 @@ import { attachmentsApi } from '@/services/api'
 import { MULTIPART_PART_SIZE, SINGLE_PUT_MAX_BYTES, planUpload } from './media-limits'
 import { prepareOutgoingFile } from './media-compress'
 import {
+  FILE_UPLOAD_CONCURRENCY,
   MULTIPART_CONCURRENCY,
   missingPartNumbers,
   retryDelayMs,
   runPool,
 } from './transfer-runtime'
+
+export { FILE_UPLOAD_CONCURRENCY }
 
 export { ATTACHMENT_ACCEPT } from './media-limits'
 
@@ -137,18 +140,16 @@ async function finalizeWithRetry(id, body, signal) {
   throw lastError
 }
 
-export async function uploadAttachment({
+export async function uploadToStorage({
   conversationId,
   file,
-  caption,
-  replyToMessageId,
   quality = 'auto',
   onProgress,
   signal,
-  clientMessageId = crypto.randomUUID(),
   attachmentId,
   completedParts = [],
   onState,
+  abortOnCancel = true,
 }) {
   const prepared = await prepareOutgoingFile(file, { quality, onProgress, signal })
   const outgoing = prepared.file
@@ -160,7 +161,7 @@ export async function uploadAttachment({
       sizeBytes: outgoing.size,
       strategy: outgoing.size > SINGLE_PUT_MAX_BYTES ? 'multipart' : undefined,
     })
-    onState?.({ attachmentId: init.id, clientMessageId, phase: 'uploading' })
+    onState?.({ attachmentId: init.id, phase: 'uploading' })
   }
   try {
     const startedAt = Date.now()
@@ -170,7 +171,7 @@ export async function uploadAttachment({
         onProgress,
         signal,
         completed: completedParts,
-        onState: (state) => onState?.({ attachmentId: init.id, clientMessageId, ...state }),
+        onState: (state) => onState?.({ attachmentId: init.id, ...state }),
       })
     } else {
       const current = attachmentId ? await attachmentsApi.parts(init.id).catch(() => init) : init
@@ -184,25 +185,90 @@ export async function uploadAttachment({
         total: outgoing.size,
       })
     }
-    onProgress?.({ phase: 'finalizing', percent: 100, sent: outgoing.size, total: outgoing.size })
+    onProgress?.({ phase: 'uploaded', percent: 100, sent: outgoing.size, total: outgoing.size })
+    return {
+      init,
+      parts,
+      prepared,
+      outgoing,
+      originalSize: prepared.originalSize,
+      compressed: prepared.compressed,
+    }
+  } catch (error) {
+    if (error.cancelled && abortOnCancel && init?.id) {
+      await attachmentsApi.remove(init.id).catch(() => {})
+    }
+    error.attachmentId = init?.id
+    error.parts = completedParts
+    throw error
+  }
+}
+
+export async function completeAttachmentBatch({ conversationId, items, caption, replyToMessageId, clientMessageId, signal }) {
+  if (signal?.aborted) throw uploadError('Upload cancelled', { cancelled: true })
+  let lastError
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    if (signal?.aborted) throw uploadError('Upload cancelled', { cancelled: true })
+    try {
+      return await attachmentsApi.completeBatch(conversationId, {
+        clientMessageId,
+        caption,
+        replyToMessageId,
+        items,
+      })
+    } catch (error) {
+      lastError = error
+      const status = error?.status ?? error?.response?.status
+      if (status && status < 500 && status !== 409) throw error
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs(attempt, 600)))
+    }
+  }
+  throw lastError
+}
+
+export async function uploadAttachment({
+  conversationId,
+  file,
+  caption,
+  replyToMessageId,
+  quality = 'auto',
+  onProgress,
+  signal,
+  clientMessageId = crypto.randomUUID(),
+  attachmentId,
+  completedParts = [],
+  onState,
+}) {
+  const stored = await uploadToStorage({
+    conversationId,
+    file,
+    quality,
+    onProgress,
+    signal,
+    attachmentId,
+    completedParts,
+    onState: (state) => onState?.({ ...state, clientMessageId }),
+  })
+  try {
+    onProgress?.({ phase: 'finalizing', percent: 100, sent: stored.outgoing.size, total: stored.outgoing.size })
     const message = await finalizeWithRetry(
-      init.id,
+      stored.init.id,
       {
         clientMessageId,
         caption,
         replyToMessageId,
-        ...(parts ? { parts } : {}),
+        ...(stored.parts ? { parts: stored.parts } : {}),
       },
       signal,
     )
-    return { ...message, uploadMeta: { originalSize: prepared.originalSize, compressed: prepared.compressed } }
+    return { ...message, uploadMeta: { originalSize: stored.originalSize, compressed: stored.compressed } }
   } catch (error) {
-    if (error.cancelled && init?.id) {
-      await attachmentsApi.remove(init.id).catch(() => {})
+    if (error.cancelled && stored.init?.id) {
+      await attachmentsApi.remove(stored.init.id).catch(() => {})
     }
-    error.attachmentId = init?.id
+    error.attachmentId = stored.init?.id
     error.clientMessageId = clientMessageId
-    error.parts = completedParts
+    error.parts = stored.parts || completedParts
     throw error
   }
 }

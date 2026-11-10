@@ -7,13 +7,21 @@ String previewText(Map<String, dynamic>? message) {
     case 'system':
       return content;
     case 'image':
+      final photos = message['attachments'] is List ? (message['attachments'] as List).length : 0;
+      if (photos > 1) return content.isEmpty ? '$photos photos' : content;
       return content.isEmpty ? 'Photo' : content;
     case 'video':
       return content.isEmpty ? 'Video' : content;
     case 'audio':
       return content.isEmpty ? 'Audio' : content;
     case 'file':
-      final name = (message['attachment'] as Map?)?['originalName'] as String?;
+      final files = message['attachments'] is List && (message['attachments'] as List).isNotEmpty
+          ? (message['attachments'] as List)
+          : message['attachment'] is Map
+              ? [message['attachment']]
+              : const [];
+      if (files.length > 1) return content.isEmpty ? '${files.length} files' : content;
+      final name = (files.isNotEmpty ? files.first as Map : message['attachment'] as Map?)?['displayName'] as String?;
       return content.isEmpty ? (name ?? 'File') : content;
     default:
       return content;

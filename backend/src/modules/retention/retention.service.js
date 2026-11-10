@@ -23,6 +23,7 @@ import {
   REMINDER_WINDOWS,
 } from '../../services/retention-policy.js';
 import { conversationService } from '../conversations/conversations.service.js';
+import { displayFileName } from '../../services/michat-filename.js';
 import { getNotificationPrefs } from '../notify/prefs.js';
 import { createStorageKey } from '../../services/object-storage.service.js';
 
@@ -522,7 +523,7 @@ export function retentionService(app, config) {
               messages: rows,
               attachments: files.map((file) => ({
                 id: file.id,
-                originalName: file.originalName,
+                displayName: displayFileName(file),
                 mimeType: file.mimeType,
                 sizeBytes: file.sizeBytes,
                 kind: file.kind,

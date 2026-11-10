@@ -105,11 +105,16 @@ export function events(app, c) {
       if (!uuid(x.data?.conversationId)) return c.socket.send(JSON.stringify(envelope('error', { code: 'INVALID_EVENT' })));
       try {
         await conversationService(app).assertMember(x.data.conversationId, c.userId);
-        await app.broadcaster.conversation(x.data.conversationId, 'typing.updated', {
-          conversationId: x.data.conversationId,
-          userId: c.userId,
-          typing: x.event === 'typing.start',
-        });
+        await app.broadcaster.conversation(
+          x.data.conversationId,
+          'typing.updated',
+          {
+            conversationId: x.data.conversationId,
+            userId: c.userId,
+            typing: x.event === 'typing.start',
+          },
+          { excludeUserId: c.userId },
+        );
       } catch {
         return c.socket.send(JSON.stringify(envelope('error', { code: 'FORBIDDEN_EVENT' })));
       }

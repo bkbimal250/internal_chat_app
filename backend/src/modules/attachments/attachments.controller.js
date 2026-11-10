@@ -20,8 +20,27 @@ export const attachmentsController = (app, config) => {
       reply.code(message.duplicate ? 200 : 201);
       return message;
     },
+    completeBatch: async (request, reply) => {
+      const message = await service.completeBatch(request.params.id, request.auth.userId, request.body);
+      if (!message.duplicate) {
+        await app.broadcaster.conversation(message.conversationId, 'message.created', message);
+        await notifyNewMessage(app, message).catch(() => {});
+      }
+      reply.code(message.duplicate ? 200 : 201);
+      return message;
+    },
     download: (request) =>
       service.downloadUrl(request.params.id, request.auth.userId, { download: request.query.download === true }),
+    zip: async (request, reply) => {
+      request.raw.setTimeout(0);
+      reply.raw.setTimeout(0);
+      const prepared = await service.openZipStream(request.params.id, request.auth.userId, request.body.ids);
+      reply.type('application/zip');
+      reply.header('Content-Disposition', prepared.contentDisposition);
+      reply.header('Cache-Control', 'no-store');
+      reply.header('X-Archive-Name', encodeURIComponent(prepared.archiveName));
+      return reply.send(prepared.output);
+    },
     cancel: (request) => service.cancel(request.params.id, request.auth.userId),
     remove: async (request) => {
       const message = await service.remove(request.params.id, request.auth.userId);

@@ -226,6 +226,24 @@ describe('websocket event handling', () => {
     expect(directory.pages[0].data[0].photoVersion).toBe('2026-10-30T00:00:00.000Z')
   })
 
+  it('keeps unread for a hidden tab even if that conversation is selected', () => {
+    applyRealtimeEvent(
+      {
+        event: 'message.created',
+        data: {
+          id: 'hidden-1',
+          conversationId: 'c1',
+          senderId: 'other',
+          sequenceNumber: 9,
+          content: 'still unread',
+        },
+      },
+      { currentUserId: 'me', viewedConversationId: null },
+    )
+    const list = queryClient.store.get(JSON.stringify(queryKeys.conversations))
+    expect(list.data[0].unreadCount).toBe(1)
+  })
+
   it('notifies presence typing and revocation handlers', () => {
     const onPresence = vi.fn()
     const onTyping = vi.fn()

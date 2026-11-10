@@ -64,6 +64,15 @@ describe('message cache', () => {
     expect(canCopyMessage(base)).toBe(true)
     expect(canCopyMessage({ ...base, deletedAt: new Date().toISOString() })).toBe(false)
     expect(canDownloadMessage({ ...base, attachment: { id: 'a1', status: 'available' } })).toBe(true)
+    expect(
+      canDownloadMessage({
+        ...base,
+        attachments: [
+          { id: 'a1', status: 'available' },
+          { id: 'a2', status: 'available' },
+        ],
+      }),
+    ).toBe(true)
     expect(canDownloadMessage(base)).toBe(false)
     expect(canReplyPrivately(base, { currentUserId: 'u2', isGroup: true })).toBe(true)
     expect(canReplyPrivately(base, { currentUserId: 'u1', isGroup: true })).toBe(false)

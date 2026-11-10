@@ -172,6 +172,11 @@ export function objectStorage(config, logger, { internalClient, publicClient: pu
         throw error;
       }
     },
+    async getObjectStream(key) {
+      requireEnabled();
+      const object = await internal.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+      return object.Body;
+    },
     async getObjectBuffer(key, maxBytes) {
       requireEnabled();
       const object = await internal.send(new GetObjectCommand({ Bucket: bucket, Key: key }));

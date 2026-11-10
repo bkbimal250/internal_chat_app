@@ -9,10 +9,10 @@ import {
 import { AUDIO_ACCEPT, CAMERA_ACCEPT, DOCUMENT_ACCEPT, MEDIA_ACCEPT } from '@/features/messages/media-limits'
 
 const OPTIONS = [
-  { id: 'document', label: 'Document', accept: DOCUMENT_ACCEPT, icon: FileText, capture: undefined },
-  { id: 'media', label: 'Photos & videos', accept: MEDIA_ACCEPT, icon: Images, capture: undefined },
-  { id: 'camera', label: 'Camera', accept: CAMERA_ACCEPT, icon: Camera, capture: 'environment' },
-  { id: 'audio', label: 'Audio', accept: AUDIO_ACCEPT, icon: Headphones, capture: undefined },
+  { id: 'document', label: 'Document', accept: DOCUMENT_ACCEPT, icon: FileText, multiple: true },
+  { id: 'media', label: 'Photos & videos', accept: MEDIA_ACCEPT, icon: Images, multiple: true },
+  { id: 'camera', label: 'Camera', accept: CAMERA_ACCEPT, icon: Camera, capture: 'environment', multiple: false },
+  { id: 'audio', label: 'Audio', accept: AUDIO_ACCEPT, icon: Headphones, multiple: true },
 ]
 
 export function AttachMenu({ disabled, onPick }) {
@@ -43,10 +43,12 @@ export function AttachMenu({ disabled, onPick }) {
                 const input = document.createElement('input')
                 input.type = 'file'
                 input.accept = option.accept
+                if (option.multiple) input.multiple = true
                 if (option.capture) input.setAttribute('capture', option.capture)
                 input.onchange = () => {
-                  const file = input.files?.[0]
-                  if (file) onPick(file)
+                  const files = Array.from(input.files || [])
+                  if (!files.length) return
+                  onPick(option.multiple ? files : files)
                 }
                 input.click()
               }}

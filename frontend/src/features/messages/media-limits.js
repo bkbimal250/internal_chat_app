@@ -2,6 +2,8 @@ export const TWO_GIB = 2 * 1024 * 1024 * 1024
 export const SINGLE_PUT_MAX_BYTES = 8 * 1024 * 1024
 export const MULTIPART_PART_SIZE = 8 * 1024 * 1024
 export const WEB_VIDEO_COMPRESS_MAX = 80 * 1024 * 1024
+export const MAX_ATTACHMENT_BATCH = 50
+export const FILE_UPLOAD_CONCURRENCY = 3
 
 export const ALLOWED_TYPES = {
   'image/jpeg': { kind: 'image', maxBytes: 25 * 1024 * 1024, compressible: true },

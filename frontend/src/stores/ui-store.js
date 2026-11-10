@@ -93,19 +93,52 @@ export const usePresenceStore = create((set, get) => ({
   isOnline: (userId) => Boolean(get().online[userId]),
 }))
 
+const typingTimers = new Map()
+const TYPING_EXPIRE_MS = 6000
+
 export const useTypingStore = create((set, get) => ({
   byConversation: {},
-  setTyping: (conversationId, userId, typing) => {
-    if (!conversationId || !userId) return
+  setTyping: (conversationId, userId, typing, currentUserId) => {
+    if (!conversationId || !userId || userId === currentUserId) return
+    const key = `${conversationId}:${userId}`
+    const existing = typingTimers.get(key)
+    if (existing) window.clearTimeout(existing)
     const current = new Set(get().byConversation[conversationId] ?? [])
-    if (typing) current.add(userId)
-    else current.delete(userId)
+    if (typing) {
+      current.add(userId)
+      typingTimers.set(
+        key,
+        window.setTimeout(() => {
+          typingTimers.delete(key)
+          get().setTyping(conversationId, userId, false, currentUserId)
+        }, TYPING_EXPIRE_MS),
+      )
+    } else {
+      current.delete(userId)
+      typingTimers.delete(key)
+    }
     set({
       byConversation: {
         ...get().byConversation,
         [conversationId]: [...current],
       },
     })
+  },
+  clearConversation: (conversationId) => {
+    for (const key of [...typingTimers.keys()]) {
+      if (key.startsWith(`${conversationId}:`)) {
+        window.clearTimeout(typingTimers.get(key))
+        typingTimers.delete(key)
+      }
+    }
+    const next = { ...get().byConversation }
+    delete next[conversationId]
+    set({ byConversation: next })
+  },
+  clearAll: () => {
+    for (const timer of typingTimers.values()) window.clearTimeout(timer)
+    typingTimers.clear()
+    set({ byConversation: {} })
   },
   typingUserIds: (conversationId) => get().byConversation[conversationId] ?? [],
 }))

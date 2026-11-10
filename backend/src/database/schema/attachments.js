@@ -5,6 +5,7 @@ import {
   varchar,
   text,
   bigint,
+  integer,
   timestamp,
   uniqueIndex,
   index,
@@ -38,6 +39,7 @@ export const attachments = pgTable(
     sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
     checksumSha256: varchar('checksum_sha256', { length: 64 }),
     kind: varchar('kind', { length: 16 }).notNull(),
+    sortOrder: integer('sort_order').notNull().default(0),
     status: attachmentStatus('status').notNull().default('pending'),
     rejectionReason: text('rejection_reason'),
     multipartUploadId: varchar('multipart_upload_id', { length: 256 }),
@@ -51,6 +53,6 @@ export const attachments = pgTable(
     index('attachments_conversation_idx').on(t.conversationId, t.createdAt),
     index('attachments_uploader_idx').on(t.uploaderId, t.createdAt),
     index('attachments_status_idx').on(t.status, t.uploadExpiresAt),
-    uniqueIndex('attachments_message_unique').on(t.messageId),
+    index('attachments_message_idx').on(t.messageId, t.sortOrder),
   ],
 );

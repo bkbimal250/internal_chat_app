@@ -11,7 +11,17 @@ export function messagePreview(message) {
   if (type === 'image') return content || 'Photo';
   if (type === 'video') return content || 'Video';
   if (type === 'audio') return content || 'Audio';
-  if (type === 'file') return content || message.attachment?.originalName || 'File';
+  const files = Array.isArray(message.attachments) && message.attachments.length
+    ? message.attachments
+    : message.attachment
+      ? [message.attachment]
+      : [];
+  if (files.length > 1) {
+    const photos = files.filter((file) => file.kind === 'image').length;
+    if (photos === files.length) return content || `${files.length} photos`;
+    return content || `${files.length} files`;
+  }
+  if (type === 'file') return content || files[0]?.displayName || 'File';
   if (type === 'system') return content || 'Update';
   return content || 'New message';
 }

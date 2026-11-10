@@ -1,6 +1,7 @@
 import 'package:company_chat/app/providers.dart';
 import 'package:company_chat/core/theme/app_colors.dart';
 import 'package:company_chat/core/utils/preview_text.dart';
+import 'package:company_chat/core/utils/typing_label.dart';
 import 'package:company_chat/core/utils/time_format.dart';
 import 'package:company_chat/core/widgets/empty_state.dart';
 import 'package:company_chat/core/widgets/user_avatar.dart';
@@ -77,6 +78,11 @@ class ChatsScreen extends ConsumerWidget {
                             final title = controller.titleOf(conversation);
                             final isGroup = conversation['type'] == 'group';
                             final unread = (conversation['unreadCount'] as num?)?.toInt() ?? 0;
+                            final typing = remoteTypingLabel(
+                              userIds: ref.watch(typingProvider)[conversation['id']] ?? {},
+                              members: (conversation['members'] as List?) ?? const [],
+                              currentUserId: user?.id,
+                            );
                             return ListTile(
                               onTap: () => context.push('/chats/${conversation['id']}'),
                               leading: UserAvatar(
@@ -90,14 +96,12 @@ class ChatsScreen extends ConsumerWidget {
                               ),
                               title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
                               subtitle: Text(
-                                (ref.watch(typingProvider)[conversation['id']] ?? {}).isNotEmpty
-                                    ? 'typing…'
+                                typing.isNotEmpty
+                                    ? typing
                                     : previewText(conversation['latestMessage'] as Map<String, dynamic>?),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: (ref.watch(typingProvider)[conversation['id']] ?? {}).isNotEmpty
-                                    ? const TextStyle(color: AppColors.gold)
-                                    : null,
+                                style: typing.isNotEmpty ? const TextStyle(color: AppColors.gold) : null,
                               ),
                               trailing: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,

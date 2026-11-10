@@ -50,6 +50,8 @@ import {
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AttachmentMedia, AttachmentThumb, downloadAttachment } from '@/features/messages/AttachmentViews'
+import { downloadAttachmentsZip } from '@/features/messages/download-zip'
+import { attachmentDisplayName } from '@/lib/michat-filename'
 import { asDate, formatExactTime, formatMessageTime } from '@/lib/time'
 import { getErrorMessage } from '@/services/api-error'
 import { toast } from 'sonner'
@@ -63,8 +65,13 @@ function collectShared(messages) {
   const links = []
   for (const message of messages ?? []) {
     if (message.deletedAt) continue
-    const attachment = message.attachment
-    if (attachment?.status === 'available') {
+    const files = Array.isArray(message.attachments) && message.attachments.length
+      ? message.attachments
+      : message.attachment
+        ? [message.attachment]
+        : []
+    for (const attachment of files) {
+      if (attachment?.status !== 'available') continue
       if (attachment.kind === 'image' || attachment.kind === 'video') {
         media.push({ message, attachment })
       } else {
@@ -123,7 +130,7 @@ function groupByPeriod(items, getDate) {
 const tabTriggerClass =
   'h-full flex-1 rounded-none border-b-2 border-transparent bg-transparent text-muted-foreground shadow-none transition-none data-[state=active]:border-emerald-600 data-[state=active]:bg-transparent data-[state=active]:text-emerald-700 data-[state=active]:shadow-none'
 
-function SharedMediaScreen({ shared, onBack, onOpenMedia }) {
+function SharedMediaScreen({ shared, onBack, onOpenMedia, conversationId }) {
   const [tab, setTab] = useState('media')
   const mediaGroups = useMemo(
     () => groupByPeriod(shared.media, (item) => item.message.createdAt),
@@ -138,11 +145,26 @@ function SharedMediaScreen({ shared, onBack, onOpenMedia }) {
     [shared.links],
   )
 
+  const [zipping, setZipping] = useState(false)
+
   async function saveDoc(attachment) {
     try {
       await downloadAttachment(attachment)
     } catch (error) {
       toast.error(getErrorMessage(error))
+    }
+  }
+
+  async function downloadAll(items) {
+    const ids = items.map((item) => item.attachment?.id).filter(Boolean)
+    if (!conversationId || ids.length < 2 || zipping) return
+    setZipping(true)
+    try {
+      await downloadAttachmentsZip({ conversationId, ids })
+    } catch (error) {
+      if (error?.name !== 'AbortError') toast.error(getErrorMessage(error) || 'Unable to download ZIP')
+    } finally {
+      setZipping(false)
     }
   }
 
@@ -153,6 +175,19 @@ function SharedMediaScreen({ shared, onBack, onOpenMedia }) {
           <ArrowLeft className="size-5" />
         </Button>
         <SheetTitle className="text-base font-semibold">Media, links and docs</SheetTitle>
+        {tab !== 'links' && (tab === 'media' ? shared.media : shared.docs).length > 1 ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="ml-auto mr-2"
+            data-testid="download-all-zip"
+            disabled={zipping}
+            onClick={() => downloadAll(tab === 'media' ? shared.media : shared.docs)}
+          >
+            {zipping ? 'Preparing ZIP…' : 'Download all'}
+          </Button>
+        ) : null}
       </div>
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0">
         <TabsList className="h-12 w-full justify-stretch rounded-none border-b bg-background p-0">
@@ -203,7 +238,7 @@ function SharedMediaScreen({ shared, onBack, onOpenMedia }) {
                         <FileText className="size-5 text-muted-foreground" />
                       </span>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">{item.attachment.originalName}</p>
+                        <p className="truncate text-sm font-medium">{attachmentDisplayName(item.attachment)}</p>
                         <p className="text-xs text-muted-foreground">
                           {[formatSize(item.attachment.sizeBytes), formatMessageTime(item.message.createdAt)]
                             .filter(Boolean)
@@ -398,6 +433,7 @@ export function ChatInfoPanel({ conversation, messages = [], open, onOpenChange 
         {mediaOpen ? (
           <SharedMediaScreen
             shared={shared}
+            conversationId={conversation?.id}
             onBack={() => setMediaOpen(false)}
             onOpenMedia={setActiveMedia}
           />
@@ -840,7 +876,7 @@ export function ChatInfoPanel({ conversation, messages = [], open, onOpenChange 
 
       <Dialog open={Boolean(activeMedia)} onOpenChange={(next) => !next && setActiveMedia(null)}>
         <DialogContent className="max-w-4xl border-none bg-black p-2">
-          <DialogTitle className="sr-only">{activeMedia?.attachment?.originalName}</DialogTitle>
+          <DialogTitle className="sr-only">{attachmentDisplayName(activeMedia?.attachment)}</DialogTitle>
           {activeMedia ? <AttachmentMedia attachment={activeMedia.attachment} /> : null}
         </DialogContent>
       </Dialog>

@@ -1,13 +1,27 @@
-import { and, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { attachments, conversations, conversationMembers, messages } from '../../database/schema/index.js';
 import { AppError } from '../../utils/app-error.js';
 import { conversationService } from '../conversations/conversations.service.js';
 import { assertReplyTo } from '../messages/message-references.js';
 import { assertDeclaredType, inspectUploadedObject, sanitizeFileName } from '../../services/file-kind.js';
 import { createStorageKey } from '../../services/object-storage.service.js';
-import { assertPartNumbers, normalizeParts, planUpload } from '../../services/upload-plan.js';
+import {
+  assertPartNumbers,
+  MAX_ATTACHMENT_BATCH,
+  MAX_PENDING_UPLOADS,
+  MAX_ZIP_BYTES,
+  normalizeParts,
+  planUpload,
+} from '../../services/upload-plan.js';
 import { expiresAtForInsert } from '../retention/expires-at.js';
 import { assertGroupSend } from '../groups/group-permissions.js';
+import {
+  archiveFileName,
+  contentDispositionAttachment,
+  displayFileName,
+  uniqueDisplayNames,
+} from '../../services/michat-filename.js';
+import { streamZipArchive, zipOutputStream } from '../../services/zip-archive.js';
 
 const INLINE_KINDS = new Set(['image', 'video', 'audio']);
 
@@ -15,13 +29,30 @@ export function publicAttachment(row) {
   if (!row) return null;
   return {
     id: row.id,
-    originalName: row.originalName,
+    displayName: displayFileName(row),
     mimeType: row.mimeType,
     sizeBytes: row.sizeBytes,
     kind: row.kind,
     status: row.status,
+    sortOrder: Number(row.sortOrder ?? 0),
     checksumSha256: row.checksumSha256 || null,
   };
+}
+
+export function presentAttachments(files = []) {
+  const rows = (Array.isArray(files) ? files : []).filter(Boolean);
+  const names = uniqueDisplayNames(rows);
+  const list = rows.map((row, index) => ({
+    ...publicAttachment(row),
+    displayName: names[index],
+  }));
+  return { attachment: list[0] || null, attachments: list };
+}
+
+export function batchMessageType(kinds = []) {
+  if (!kinds.length) return 'file';
+  const unique = new Set(kinds);
+  return unique.size === 1 ? kinds[0] : 'file';
 }
 
 export function attachmentsService(app, config) {
@@ -107,15 +138,97 @@ export function attachmentsService(app, config) {
     if (!storage.enabled) throw new AppError('File storage is unavailable', 503, 'STORAGE_UNAVAILABLE');
   }
 
+  async function rejectUpload(id, storageKey, reason, error) {
+    await db
+      .update(attachments)
+      .set({
+        status: 'rejected',
+        rejectionReason: reason,
+        deletedAt: new Date(),
+      })
+      .where(eq(attachments.id, id));
+    await storage.remove(storageKey).catch(() => {});
+    throw error;
+  }
+
+  async function completeUploadedObject(existing, input = {}) {
+    if (existing.multipartUploadId) {
+      const already = await storage.head(existing.storageKey);
+      if (!already) {
+        const plan = planUpload(existing.sizeBytes, 'multipart');
+        const clientParts = normalizeParts(input.parts, plan.partCount);
+        const listed = clientParts ?? (await storage.listParts(existing.storageKey, existing.multipartUploadId));
+        const uploadedBytes = listed.reduce((sum, part) => sum + Number(part.sizeBytes ?? 0), 0);
+        if (!listed.length || listed.length !== plan.partCount) {
+          throw new AppError('Uploaded object was not found', 409, 'UPLOAD_INCOMPLETE');
+        }
+        if (!clientParts && uploadedBytes !== existing.sizeBytes) {
+          throw new AppError('Uploaded size does not match', 409, 'UPLOAD_INCOMPLETE');
+        }
+        await storage.completeMultipart(existing.storageKey, existing.multipartUploadId, listed);
+      }
+    }
+    const head = await storage.head(existing.storageKey);
+    if (!head) throw new AppError('Uploaded object was not found', 409, 'UPLOAD_INCOMPLETE');
+    const size = Number(head.ContentLength ?? 0);
+    if (size !== existing.sizeBytes) {
+      await rejectUpload(
+        existing.id,
+        existing.storageKey,
+        'SIZE_MISMATCH',
+        new AppError('Uploaded size does not match', 400, 'INVALID_UPLOAD'),
+      );
+    }
+    let checksum;
+    try {
+      await inspectUploadedObject(storage, existing.storageKey, existing.mimeType, existing.sizeBytes);
+      checksum = await storage.hashObject(existing.storageKey);
+    } catch (error) {
+      await rejectUpload(
+        existing.id,
+        existing.storageKey,
+        error instanceof AppError ? error.code : 'SCAN_FAILED',
+        error instanceof AppError ? error : new AppError('File failed security checks', 415, 'UNSUPPORTED_MEDIA_TYPE'),
+      );
+    }
+    if (input.checksumSha256 && String(input.checksumSha256).toLowerCase() !== checksum) {
+      await rejectUpload(
+        existing.id,
+        existing.storageKey,
+        'CHECKSUM_MISMATCH',
+        new AppError('Uploaded checksum does not match', 400, 'INVALID_UPLOAD'),
+      );
+    }
+    return checksum;
+  }
+
+  async function releasePending(id) {
+    await db
+      .update(attachments)
+      .set({ status: 'pending' })
+      .where(and(eq(attachments.id, id), eq(attachments.status, 'quarantined'), isNull(attachments.messageId)));
+  }
+
+  async function quarantinePending(id) {
+    const [existing] = await db
+      .update(attachments)
+      .set({ status: 'quarantined' })
+      .where(and(eq(attachments.id, id), eq(attachments.status, 'pending')))
+      .returning();
+    return existing;
+  }
+
   return {
     publicAttachment,
+    presentAttachments,
     async hydrate(message) {
       if (!message) return message;
-      const [attachment] = await db
+      const files = await db
         .select()
         .from(attachments)
-        .where(and(eq(attachments.messageId, message.id), eq(attachments.status, 'available')));
-      return { ...message, attachment: publicAttachment(attachment) };
+        .where(and(eq(attachments.messageId, message.id), eq(attachments.status, 'available')))
+        .orderBy(asc(attachments.sortOrder), asc(attachments.createdAt));
+      return { ...message, ...presentAttachments(files) };
     },
     async hydrateMany(rows) {
       if (!rows.length) return rows;
@@ -123,9 +236,15 @@ export function attachmentsService(app, config) {
       const files = await db
         .select()
         .from(attachments)
-        .where(and(inArray(attachments.messageId, ids), eq(attachments.status, 'available')));
-      const byMessage = new Map(files.map((row) => [row.messageId, row]));
-      return rows.map((row) => ({ ...row, attachment: publicAttachment(byMessage.get(row.id)) }));
+        .where(and(inArray(attachments.messageId, ids), eq(attachments.status, 'available')))
+        .orderBy(asc(attachments.sortOrder), asc(attachments.createdAt));
+      const byMessage = new Map();
+      for (const file of files) {
+        const list = byMessage.get(file.messageId) || [];
+        list.push(file);
+        byMessage.set(file.messageId, list);
+      }
+      return rows.map((row) => ({ ...row, ...presentAttachments(byMessage.get(row.id) || []) }));
     },
     async init(conversationId, userId, input) {
       assertWritable();
@@ -140,7 +259,7 @@ export function attachmentsService(app, config) {
         .select({ pending: sql`count(*)::int` })
         .from(attachments)
         .where(and(eq(attachments.uploaderId, userId), eq(attachments.status, 'pending')));
-      if (pending >= 20) throw new AppError('Too many unfinished uploads', 429, 'QUOTA_EXCEEDED');
+      if (pending >= MAX_PENDING_UPLOADS) throw new AppError('Too many unfinished uploads', 429, 'QUOTA_EXCEEDED');
       const storageKey = createStorageKey();
       const uploadExpiresAt = new Date(Date.now() + config.attachmentPendingTtlMs);
       const plan = planUpload(input.sizeBytes, input.strategy);
@@ -247,11 +366,7 @@ export function attachmentsService(app, config) {
       if (current.uploadExpiresAt && current.uploadExpiresAt.getTime() < Date.now()) {
         throw new AppError('Upload expired', 410, 'UPLOAD_EXPIRED');
       }
-      const [existing] = await db
-        .update(attachments)
-        .set({ status: 'quarantined' })
-        .where(and(eq(attachments.id, id), eq(attachments.status, 'pending')))
-        .returning();
+      const existing = await quarantinePending(id);
       if (!existing) {
         const [again] = await db.select().from(attachments).where(eq(attachments.id, id));
         if (again?.status === 'available' && again.messageId) {
@@ -261,118 +376,156 @@ export function attachmentsService(app, config) {
         }
         throw new AppError('Upload is already being finalized', 409, 'CONFLICT');
       }
-      const releasePending = async () => {
-        await db
-          .update(attachments)
-          .set({ status: 'pending' })
-          .where(and(eq(attachments.id, id), eq(attachments.status, 'quarantined'), isNull(attachments.messageId)));
-      };
       try {
-      if (existing.multipartUploadId) {
-        const head = await storage.head(existing.storageKey);
-        if (!head) {
-          const plan = planUpload(existing.sizeBytes, 'multipart');
-          const clientParts = normalizeParts(input.parts, plan.partCount);
-          const listed = clientParts ?? (await storage.listParts(existing.storageKey, existing.multipartUploadId));
-          const uploadedBytes = listed.reduce((sum, part) => sum + Number(part.sizeBytes ?? 0), 0);
-          if (!listed.length || listed.length !== plan.partCount) {
-            throw new AppError('Uploaded object was not found', 409, 'UPLOAD_INCOMPLETE');
+        const checksum = await completeUploadedObject(existing, input);
+        return db.transaction(async (tx) => {
+          const created = await insertMessage(tx, {
+            conversationId: existing.conversationId,
+            userId,
+            clientMessageId: input.clientMessageId,
+            content: input.caption?.trim() ?? '',
+            kind: existing.kind,
+            replyToMessageId: input.replyToMessageId,
+          });
+          if (created.duplicate) {
+            await tx
+              .update(attachments)
+              .set({
+                status: 'deleted',
+                deletedAt: new Date(),
+                rejectionReason: 'duplicate_client_message',
+              })
+              .where(eq(attachments.id, id));
+            await storage.remove(existing.storageKey).catch(() => {});
+            const files = await tx
+              .select()
+              .from(attachments)
+              .where(and(eq(attachments.messageId, created.message.id), eq(attachments.status, 'available')))
+              .orderBy(asc(attachments.sortOrder), asc(attachments.createdAt));
+            return {
+              ...created.message,
+              ...presentAttachments(files),
+              duplicate: true,
+            };
           }
-          if (!clientParts && uploadedBytes !== existing.sizeBytes) {
-            throw new AppError('Uploaded size does not match', 409, 'UPLOAD_INCOMPLETE');
-          }
-          await storage.completeMultipart(existing.storageKey, existing.multipartUploadId, listed);
-        }
-      }
-      const head = await storage.head(existing.storageKey);
-      if (!head) throw new AppError('Uploaded object was not found', 409, 'UPLOAD_INCOMPLETE');
-      const size = Number(head.ContentLength ?? 0);
-      if (size !== existing.sizeBytes) {
-        await db
-          .update(attachments)
-          .set({
-            status: 'rejected',
-            rejectionReason: 'SIZE_MISMATCH',
-            deletedAt: new Date(),
-          })
-          .where(eq(attachments.id, id));
-        await storage.remove(existing.storageKey).catch(() => {});
-        throw new AppError('Uploaded size does not match', 400, 'INVALID_UPLOAD');
-      }
-      let checksum;
-      try {
-        await inspectUploadedObject(storage, existing.storageKey, existing.mimeType, existing.sizeBytes);
-        checksum = await storage.hashObject(existing.storageKey);
-      } catch (error) {
-        await db
-          .update(attachments)
-          .set({
-            status: 'rejected',
-            rejectionReason: error instanceof AppError ? error.code : 'SCAN_FAILED',
-            deletedAt: new Date(),
-          })
-          .where(eq(attachments.id, id));
-        await storage.remove(existing.storageKey).catch(() => {});
-        throw error instanceof AppError ? error : new AppError('File failed security checks', 415, 'UNSUPPORTED_MEDIA_TYPE');
-      }
-      if (input.checksumSha256 && String(input.checksumSha256).toLowerCase() !== checksum) {
-        await db
-          .update(attachments)
-          .set({
-            status: 'rejected',
-            rejectionReason: 'CHECKSUM_MISMATCH',
-            deletedAt: new Date(),
-          })
-          .where(eq(attachments.id, id));
-        await storage.remove(existing.storageKey).catch(() => {});
-        throw new AppError('Uploaded checksum does not match', 400, 'INVALID_UPLOAD');
-      }
-      return db.transaction(async (tx) => {
-        const created = await insertMessage(tx, {
-          conversationId: existing.conversationId,
-          userId,
-          clientMessageId: input.clientMessageId,
-          content: input.caption?.trim() ?? '',
-          kind: existing.kind,
-          replyToMessageId: input.replyToMessageId,
-        });
-        if (created.duplicate) {
-          await tx
+          const [updated] = await tx
             .update(attachments)
             .set({
-              status: 'deleted',
-              deletedAt: new Date(),
-              rejectionReason: 'duplicate_client_message',
+              status: 'available',
+              checksumSha256: checksum,
+              messageId: created.message.id,
+              sortOrder: 0,
+              finalizedAt: new Date(),
+              uploadExpiresAt: null,
             })
-            .where(eq(attachments.id, id));
-          const [attached] = await tx
-            .select()
-            .from(attachments)
-            .where(and(eq(attachments.messageId, created.message.id), eq(attachments.status, 'available')));
-          await storage.remove(existing.storageKey).catch(() => {});
-          return {
-            ...created.message,
-            attachment: publicAttachment(attached),
-            duplicate: true,
-          };
-        }
-        const [updated] = await tx
-          .update(attachments)
-          .set({
-            status: 'available',
-            checksumSha256: checksum,
-            messageId: created.message.id,
-            finalizedAt: new Date(),
-            uploadExpiresAt: null,
-          })
-          .where(eq(attachments.id, id))
-          .returning();
-        return { ...created.message, attachment: publicAttachment(updated), duplicate: false };
-      });
+            .where(eq(attachments.id, id))
+            .returning();
+          return { ...created.message, ...presentAttachments([updated]), duplicate: false };
+        });
       } catch (error) {
         if (!(error instanceof AppError) || !['UNSUPPORTED_MEDIA_TYPE', 'INVALID_UPLOAD'].includes(error.code)) {
-          await releasePending();
+          await releasePending(id);
         }
+        throw error;
+      }
+    },
+    async completeBatch(conversationId, userId, input) {
+      assertWritable();
+      const { conversation, member } = await conversationsService.assertMember(conversationId, userId);
+      assertGroupSend(conversation, member.role);
+      const items = Array.isArray(input.items) ? input.items : [];
+      if (items.length < 1 || items.length > MAX_ATTACHMENT_BATCH) {
+        throw new AppError(`A batch can include 1 to ${MAX_ATTACHMENT_BATCH} files`, 400, 'VALIDATION_ERROR');
+      }
+      const ids = items.map((item) => item?.id).filter(Boolean);
+      if (ids.length !== items.length || new Set(ids).size !== ids.length) {
+        throw new AppError('Attachment ids are invalid', 400, 'VALIDATION_ERROR');
+      }
+      if (input.clientMessageId) {
+        const [duplicate] = await db
+          .select()
+          .from(messages)
+          .where(and(eq(messages.conversationId, conversationId), eq(messages.clientMessageId, input.clientMessageId)));
+        if (duplicate) {
+          const hydrated = await this.hydrate(duplicate);
+          return { ...hydrated, duplicate: true };
+        }
+      }
+      const rows = await db.select().from(attachments).where(inArray(attachments.id, ids));
+      if (rows.length !== ids.length) throw new AppError('Attachment not found', 404, 'NOT_FOUND');
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      for (const id of ids) {
+        const row = byId.get(id);
+        if (!row || row.uploaderId !== userId) throw new AppError('Attachment not found', 404, 'NOT_FOUND');
+        if (row.conversationId !== conversationId) {
+          throw new AppError('Attachment does not belong to this conversation', 400, 'INVALID_REFERENCE');
+        }
+        if (row.status === 'available' && row.messageId) {
+          throw new AppError('Upload is not pending', 409, 'CONFLICT');
+        }
+        if (row.status !== 'pending') throw new AppError('Upload is not pending', 409, 'CONFLICT');
+        if (row.uploadExpiresAt && row.uploadExpiresAt.getTime() < Date.now()) {
+          throw new AppError('Upload expired', 410, 'UPLOAD_EXPIRED');
+        }
+      }
+      const ready = [];
+      const quarantinedIds = [];
+      try {
+        for (const [index, item] of items.entries()) {
+          const existing = await quarantinePending(item.id);
+          if (!existing) throw new AppError('Upload is already being finalized', 409, 'CONFLICT');
+          quarantinedIds.push(existing.id);
+          const checksum = await completeUploadedObject(existing, item);
+          ready.push({ existing, checksum, sortOrder: index });
+        }
+        return db.transaction(async (tx) => {
+          const created = await insertMessage(tx, {
+            conversationId,
+            userId,
+            clientMessageId: input.clientMessageId,
+            content: input.caption?.trim() ?? '',
+            kind: batchMessageType(ready.map((item) => item.existing.kind)),
+            replyToMessageId: input.replyToMessageId,
+          });
+          if (created.duplicate) {
+            for (const item of ready) {
+              await tx
+                .update(attachments)
+                .set({
+                  status: 'deleted',
+                  deletedAt: new Date(),
+                  rejectionReason: 'duplicate_client_message',
+                })
+                .where(eq(attachments.id, item.existing.id));
+              await storage.remove(item.existing.storageKey).catch(() => {});
+            }
+            const files = await tx
+              .select()
+              .from(attachments)
+              .where(and(eq(attachments.messageId, created.message.id), eq(attachments.status, 'available')))
+              .orderBy(asc(attachments.sortOrder), asc(attachments.createdAt));
+            return { ...created.message, ...presentAttachments(files), duplicate: true };
+          }
+          const updated = [];
+          for (const item of ready) {
+            const [row] = await tx
+              .update(attachments)
+              .set({
+                status: 'available',
+                checksumSha256: item.checksum,
+                messageId: created.message.id,
+                sortOrder: item.sortOrder,
+                finalizedAt: new Date(),
+                uploadExpiresAt: null,
+              })
+              .where(eq(attachments.id, item.existing.id))
+              .returning();
+            updated.push(row);
+          }
+          return { ...created.message, ...presentAttachments(updated), duplicate: false };
+        });
+      } catch (error) {
+        await Promise.all(quarantinedIds.map((id) => releasePending(id)));
         throw error;
       }
     },
@@ -388,9 +541,10 @@ export function attachmentsService(app, config) {
       await conversationsService.assertMember(row.conversationId, userId);
       const expiresIn = config.s3DownloadTtlSeconds;
       const inline = INLINE_KINDS.has(row.kind) && !download;
+      const fileName = displayFileName(row);
       const url = await storage.presignDownload(row.storageKey, {
         mimeType: row.mimeType,
-        fileName: row.originalName,
+        fileName,
         inline,
         expiresIn,
       });
@@ -398,8 +552,67 @@ export function attachmentsService(app, config) {
         url,
         expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
         mimeType: row.mimeType,
-        fileName: row.originalName,
+        fileName,
         inline,
+      };
+    },
+    async prepareZip(conversationId, userId, ids) {
+      await conversationsService.assertMember(conversationId, userId);
+      if (!Array.isArray(ids) || ids.length < 1 || ids.length > MAX_ATTACHMENT_BATCH) {
+        throw new AppError(`Select between 1 and ${MAX_ATTACHMENT_BATCH} files`, 400, 'VALIDATION_ERROR');
+      }
+      const orderedIds = [];
+      const seen = new Set();
+      for (const id of ids) {
+        if (typeof id !== 'string' || seen.has(id)) continue;
+        seen.add(id);
+        orderedIds.push(id);
+      }
+      if (!orderedIds.length) throw new AppError('Select files to download', 400, 'VALIDATION_ERROR');
+      const rows = await db.select().from(attachments).where(inArray(attachments.id, orderedIds));
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      const ordered = [];
+      for (const id of orderedIds) {
+        const row = byId.get(id);
+        if (
+          !row ||
+          row.conversationId !== conversationId ||
+          row.status !== 'available' ||
+          row.deletedAt
+        ) {
+          throw new AppError('Attachment not found', 403, 'FORBIDDEN');
+        }
+        if (row.messageId) {
+          const [message] = await db.select().from(messages).where(eq(messages.id, row.messageId));
+          if (!message || message.deletedAt) throw new AppError('Attachment not found', 403, 'FORBIDDEN');
+        }
+        ordered.push(row);
+      }
+      const totalBytes = ordered.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0);
+      if (totalBytes > MAX_ZIP_BYTES) {
+        throw new AppError('Selected files are too large to zip', 413, 'PAYLOAD_TOO_LARGE');
+      }
+      const names = uniqueDisplayNames(ordered);
+      return {
+        archiveName: archiveFileName(),
+        totalBytes,
+        files: ordered.map((row, index) => ({
+          id: row.id,
+          storageKey: row.storageKey,
+          sizeBytes: row.sizeBytes,
+          mimeType: row.mimeType,
+          entryName: names[index],
+        })),
+      };
+    },
+    async openZipStream(conversationId, userId, ids) {
+      const prepared = await this.prepareZip(conversationId, userId, ids);
+      const output = zipOutputStream();
+      return {
+        ...prepared,
+        output,
+        contentDisposition: contentDispositionAttachment(prepared.archiveName),
+        start: () => streamZipArchive(output, prepared.files, (key) => storage.getObjectStream(key)),
       };
     },
     async destroy(id, userId) {
@@ -440,11 +653,23 @@ export function attachmentsService(app, config) {
           .returning({ lastChangeSeq: conversations.lastChangeSeq });
         let message = null;
         if (row.messageId) {
-          [message] = await tx
-            .update(messages)
-            .set({ deletedAt: new Date(), content: '', changeSeq: c.lastChangeSeq })
-            .where(and(eq(messages.id, row.messageId), isNull(messages.deletedAt)))
-            .returning();
+          const remaining = await tx
+            .select({ id: attachments.id })
+            .from(attachments)
+            .where(
+              and(
+                eq(attachments.messageId, row.messageId),
+                eq(attachments.status, 'available'),
+                ne(attachments.id, id),
+              ),
+            );
+          if (remaining.length === 0) {
+            [message] = await tx
+              .update(messages)
+              .set({ deletedAt: new Date(), content: '', changeSeq: c.lastChangeSeq })
+              .where(and(eq(messages.id, row.messageId), isNull(messages.deletedAt)))
+              .returning();
+          }
         }
         await tx
           .update(attachments)
@@ -463,38 +688,62 @@ export function attachmentsService(app, config) {
       await conversationsService.assertMember(source.conversationId, userId);
       const dest = await conversationsService.assertMember(input.conversationId, userId);
       assertGroupSend(dest.conversation, dest.member.role);
-      const [file] = await db
+      const files = await db
         .select()
         .from(attachments)
-        .where(and(eq(attachments.messageId, source.id), eq(attachments.status, 'available')));
-      if (!file) throw new AppError('Referenced message unavailable', 400, 'INVALID_REFERENCE');
-      const storageKey = createStorageKey();
-      await storage.copyObject(file.storageKey, storageKey);
+        .where(and(eq(attachments.messageId, source.id), eq(attachments.status, 'available')))
+        .orderBy(asc(attachments.sortOrder), asc(attachments.createdAt));
+      if (!files.length) throw new AppError('Referenced message unavailable', 400, 'INVALID_REFERENCE');
+      const copies = [];
+      for (const file of files) {
+        const storageKey = createStorageKey();
+        await storage.copyObject(file.storageKey, storageKey);
+        copies.push({ file, storageKey });
+      }
       return db.transaction(async (tx) => {
         const created = await insertMessage(tx, {
           conversationId: input.conversationId,
           userId,
           clientMessageId: input.clientMessageId,
           content: source.content,
-          kind: file.kind,
+          kind: batchMessageType(files.map((file) => file.kind)),
           replyToMessageId: undefined,
         });
-        const [copied] = await tx
-          .insert(attachments)
-          .values({
-            conversationId: input.conversationId,
-            uploaderId: userId,
-            messageId: created.message.id,
-            storageKey,
-            originalName: file.originalName,
-            mimeType: file.mimeType,
-            sizeBytes: file.sizeBytes,
-            checksumSha256: file.checksumSha256,
-            kind: file.kind,
-            status: 'available',
-            finalizedAt: new Date(),
-          })
-          .returning();
+        if (created.duplicate) {
+          for (const copy of copies) await storage.remove(copy.storageKey).catch(() => {});
+          const existing = await tx
+            .select()
+            .from(attachments)
+            .where(and(eq(attachments.messageId, created.message.id), eq(attachments.status, 'available')))
+            .orderBy(asc(attachments.sortOrder), asc(attachments.createdAt));
+          return {
+            ...created.message,
+            forwardedFromMessageId: created.message.forwardedFromMessageId || source.id,
+            ...presentAttachments(existing),
+            duplicate: true,
+          };
+        }
+        const copied = [];
+        for (const [index, copy] of copies.entries()) {
+          const [row] = await tx
+            .insert(attachments)
+            .values({
+              conversationId: input.conversationId,
+              uploaderId: userId,
+              messageId: created.message.id,
+              storageKey: copy.storageKey,
+              originalName: copy.file.originalName,
+              mimeType: copy.file.mimeType,
+              sizeBytes: copy.file.sizeBytes,
+              checksumSha256: copy.file.checksumSha256,
+              kind: copy.file.kind,
+              sortOrder: index,
+              status: 'available',
+              finalizedAt: new Date(),
+            })
+            .returning();
+          copied.push(row);
+        }
         await tx
           .update(messages)
           .set({ forwardedFromMessageId: source.id })
@@ -502,8 +751,8 @@ export function attachmentsService(app, config) {
         return {
           ...created.message,
           forwardedFromMessageId: source.id,
-          attachment: publicAttachment(copied),
-          duplicate: created.duplicate,
+          ...presentAttachments(copied),
+          duplicate: false,
         };
       });
     },

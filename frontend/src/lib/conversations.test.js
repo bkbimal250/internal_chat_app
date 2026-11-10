@@ -35,9 +35,20 @@ describe('conversation helpers', () => {
 
   it('previews attachment messages without exposing storage keys', () => {
     expect(previewText({ messageType: 'image', content: '' })).toBe('Photo')
-    expect(previewText({ messageType: 'file', content: '', attachment: { originalName: 'policy.pdf' } })).toBe(
-      'policy.pdf',
+    expect(previewText({ messageType: 'file', content: '', attachment: { displayName: 'MiChat Document 2026-11-10 at 5.42.17 PM.pdf' } })).toBe(
+      'MiChat Document 2026-11-10 at 5.42.17 PM.pdf',
     )
+    expect(previewText({ messageType: 'file', content: '', attachment: { originalName: 'policy.pdf' } })).toBe('File')
+    expect(
+      previewText({
+        messageType: 'image',
+        content: '',
+        attachments: [
+          { kind: 'image', originalName: 'a.png' },
+          { kind: 'image', originalName: 'b.png' },
+        ],
+      }),
+    ).toBe('2 photos')
   })
 
   it('filters by unread groups and search', () => {

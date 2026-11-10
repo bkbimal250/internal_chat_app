@@ -2,6 +2,7 @@ import 'package:company_chat/core/network/api_client.dart';
 import 'package:company_chat/core/storage/app_database.dart';
 import 'package:company_chat/core/storage/session_store.dart';
 import 'package:company_chat/core/websocket/chat_socket.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 final sessionStoreProvider = Provider<SessionStore>((ref) => SessionStore());
@@ -30,3 +31,5 @@ final onlineUsersProvider = StateProvider<Set<String>>((ref) => <String>{});
 final typingProvider = StateProvider<Map<String, Set<String>>>((ref) => {});
 
 final viewedConversationProvider = StateProvider<String?>((ref) => null);
+
+final appLifecycleProvider = StateProvider<AppLifecycleState>((ref) => AppLifecycleState.resumed);

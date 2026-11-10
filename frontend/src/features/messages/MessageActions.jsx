@@ -33,6 +33,7 @@ import { cn } from '@/lib/utils'
 import { getErrorMessage } from '@/services/api-error'
 import { toast } from 'sonner'
 import { downloadAttachment } from '@/features/messages/AttachmentViews'
+import { downloadAttachmentsZip } from '@/features/messages/download-zip'
 
 export function MessageActions({ message, currentUserId, isGroup, conversationType, align = 'end' }) {
   const queryClient = useQueryClient()
@@ -82,9 +83,22 @@ export function MessageActions({ message, currentUserId, isGroup, conversationTy
 
   async function download() {
     try {
-      await downloadAttachment(message.attachment)
+      const files = (Array.isArray(message.attachments) && message.attachments.length
+        ? message.attachments
+        : message.attachment
+          ? [message.attachment]
+          : []
+      ).filter((file) => file?.status === 'available')
+      if (files.length > 1 && message.conversationId) {
+        await downloadAttachmentsZip({
+          conversationId: message.conversationId,
+          ids: files.map((file) => file.id),
+        })
+        return
+      }
+      for (const file of files) await downloadAttachment(file)
     } catch (error) {
-      toast.error(getErrorMessage(error))
+      if (error?.name !== 'AbortError') toast.error(getErrorMessage(error))
     }
   }
 

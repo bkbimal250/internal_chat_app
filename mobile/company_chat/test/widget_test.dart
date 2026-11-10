@@ -1,9 +1,13 @@
+import 'dart:io';
+
 import 'package:company_chat/core/network/public_url.dart';
 import 'package:company_chat/core/theme/app_theme.dart';
 import 'package:company_chat/features/media/media_limits.dart';
 import 'package:company_chat/features/media/media_prepare.dart';
 import 'package:company_chat/core/notifications/notification_copy.dart';
+import 'package:company_chat/core/notifications/notify_incoming.dart';
 import 'package:company_chat/core/utils/preview_text.dart';
+import 'package:company_chat/core/utils/typing_label.dart';
 import 'package:company_chat/core/utils/time_format.dart';
 import 'package:company_chat/features/auth/presentation/login_screen.dart';
 import 'package:flutter/material.dart';
@@ -59,6 +63,92 @@ void main() {
   test('previews deleted and media messages', () {
     expect(previewText({'deletedAt': 'now'}), 'Message deleted');
     expect(previewText({'messageType': 'image', 'content': ''}), 'Photo');
+    expect(
+      previewText({
+        'messageType': 'file',
+        'content': '',
+        'attachment': {'originalName': 'secret.pdf', 'displayName': 'MiChat Document 2026-11-10 at 5.42.17 PM.pdf'},
+      }),
+      'MiChat Document 2026-11-10 at 5.42.17 PM.pdf',
+    );
+  });
+
+  test('typing labels use remote names and never me', () {
+    final members = [
+      {'id': 'a', 'displayName': 'Rahul'},
+      {'id': 'b', 'displayName': 'Priya'},
+      {'id': 'c', 'displayName': 'Amit'},
+      {'id': 'me', 'displayName': 'Me'},
+    ];
+    expect(remoteTypingLabel(userIds: {'a'}, members: members, currentUserId: 'me'), 'Rahul is typing...');
+    expect(remoteTypingLabel(userIds: {'b'}, members: members, currentUserId: 'a'), 'Priya is typing...');
+    expect(remoteTypingLabel(userIds: {'me'}, members: members, currentUserId: 'me'), '');
+    expect(remoteTypingLabel(userIds: {'a', 'b'}, members: members, currentUserId: 'me'), 'Rahul and Priya are typing...');
+    expect(remoteTypingLabel(userIds: {'a', 'b', 'c'}, members: members, currentUserId: 'me'), '3 people are typing...');
+  });
+
+  test('suppresses foreground notifications only while that chat is actively viewed', () {
+    final seen = <String>{};
+    expect(
+      shouldPresentIncomingNotice(
+        senderId: 'b',
+        currentUserId: 'a',
+        conversationId: 'c1',
+        viewedConversationId: 'c1',
+        lifecycle: AppLifecycleState.resumed,
+        messageId: 'm1',
+        seenIds: seen,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldPresentIncomingNotice(
+        senderId: 'b',
+        currentUserId: 'a',
+        conversationId: 'c1',
+        viewedConversationId: 'c2',
+        lifecycle: AppLifecycleState.resumed,
+        messageId: 'm2',
+        seenIds: seen,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldPresentIncomingNotice(
+        senderId: 'b',
+        currentUserId: 'a',
+        conversationId: 'c1',
+        viewedConversationId: 'c1',
+        lifecycle: AppLifecycleState.paused,
+        messageId: 'm3',
+        seenIds: seen,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldPresentIncomingNotice(
+        senderId: 'a',
+        currentUserId: 'a',
+        conversationId: 'c2',
+        viewedConversationId: 'c2',
+        lifecycle: AppLifecycleState.resumed,
+        messageId: 'm4',
+        seenIds: seen,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldPresentIncomingNotice(
+        senderId: 'b',
+        currentUserId: 'a',
+        conversationId: 'c2',
+        viewedConversationId: 'c3',
+        lifecycle: AppLifecycleState.resumed,
+        messageId: 'm2',
+        seenIds: seen,
+      ),
+      isFalse,
+    );
   });
 
   test('formats today as a clock time', () {
@@ -110,5 +200,22 @@ void main() {
     final theme = AppTheme.light();
     expect(theme.colorScheme.primary, isNot(equals(Colors.deepPurple)));
     expect(theme.useMaterial3, isTrue);
+  });
+
+  test('Flutter has no ZIP download action and saves with the provided MiChat name', () {
+    final lib = Directory('lib');
+    final hits = <String>[];
+    for (final entity in lib.listSync(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      final text = entity.readAsStringSync();
+      if (text.contains('attachments/zip') || text.contains('downloadAttachmentsZip') || text.contains('Download all')) {
+        hits.add(entity.path);
+      }
+    }
+    expect(hits, isEmpty);
+    final download = File('lib/features/media/media_download.dart').readAsStringSync();
+    expect(download, contains('fileName'));
+    expect(download, contains("query: {'download': true}"));
+    expect(download.contains('attachments/zip'), isFalse);
   });
 }

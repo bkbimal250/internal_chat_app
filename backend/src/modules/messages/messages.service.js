@@ -129,7 +129,10 @@ export function messagesService(app) {
   return {
     async present(message, userId) {
       if (!message) return message;
-      const hydrated = message.attachment !== undefined ? message : await files.hydrate(message);
+      const hydrated =
+        message.attachment !== undefined || message.attachments !== undefined
+          ? message
+          : await files.hydrate(message);
       const [row] = await decorate([hydrated], userId);
       return row;
     },

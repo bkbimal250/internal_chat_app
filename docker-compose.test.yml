@@ -1,0 +1,39 @@
+# Disposable isolated test stack. Dummy credentials only. Never use production secrets.
+name: michat-isolated-test
+
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_USER: chat
+      POSTGRES_PASSWORD: isolated-test-only-password
+      POSTGRES_DB: company_chat_test
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chat -d company_chat_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 8s
+
+  storage:
+    image: localstack/localstack:4.4
+    environment:
+      SERVICES: s3
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      PERSISTENCE: "0"
+    ports:
+      - "127.0.0.1:14566:4566"
+    tmpfs:
+      - /var/lib/localstack
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 12s

@@ -5,6 +5,10 @@ export const INSPECT_PREFIX_BYTES = 512 * 1024;
 export const INSPECT_TAIL_BYTES = 256 * 1024;
 export const PART_URL_BATCH = 40;
 export const MULTIPART_CONCURRENCY = 3;
+export const FILE_UPLOAD_CONCURRENCY = 3;
+export const MAX_ATTACHMENT_BATCH = 50;
+export const MAX_PENDING_UPLOADS = 60;
+export const MAX_ZIP_BYTES = 10 * 1024 * 1024 * 1024;
 
 export function planUpload(sizeBytes, strategy) {
   const size = Number(sizeBytes);

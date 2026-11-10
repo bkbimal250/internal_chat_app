@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:company_chat/app/providers.dart';
+import 'package:company_chat/core/notifications/notify_incoming.dart';
 import 'package:company_chat/core/utils/preview_text.dart';
 import 'package:company_chat/features/auth/presentation/auth_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -126,6 +127,8 @@ class ConversationsController extends StateNotifier<ConversationsState> {
       final conversationId = data['conversationId'] as String?;
       final userId = data['userId'] as String?;
       if (conversationId == null || userId == null) return;
+      final me = _ref.read(authControllerProvider).user?.id;
+      if (userId == me) return;
       final current = {..._ref.read(typingProvider)};
       final set = {...(current[conversationId] ?? <String>{})};
       if (data['typing'] == true) {
@@ -185,7 +188,11 @@ class ConversationsController extends StateNotifier<ConversationsState> {
     final conversationId = message['conversationId'] as String?;
     if (conversationId == null) return;
     final me = _ref.read(authControllerProvider).user?.id;
-    final viewing = _ref.read(viewedConversationProvider) == conversationId;
+    final viewing = isActivelyViewingChat(
+      conversationId: conversationId,
+      viewedConversationId: _ref.read(viewedConversationProvider),
+      lifecycle: _ref.read(appLifecycleProvider),
+    );
     final incoming = created && message['senderId'] != null && message['senderId'] != me && !viewing;
     final rows = [...state.items];
     final index = rows.indexWhere((row) => row['id'] == conversationId);

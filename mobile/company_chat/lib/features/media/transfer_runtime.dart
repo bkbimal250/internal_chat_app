@@ -1,4 +1,5 @@
 const multipartConcurrency = 3;
+const fileUploadConcurrency = 3;
 
 Duration retryDelay(int attempt, {int baseMs = 400}) {
   final exp = attempt + 1 > 8 ? 8 : attempt + 1;
@@ -10,13 +11,13 @@ List<int> missingPartNumbers(int partCount, Iterable<int> completed) {
   return [for (var part = 1; part <= partCount; part++) if (!done.contains(part)) part];
 }
 
-Future<List<T>> runPool<T>(
+Future<List<R>> runPool<T, R>(
   List<T> items,
   int limit,
-  Future<T> Function(T item) worker,
+  Future<R> Function(T item) worker,
 ) async {
-  if (items.isEmpty) return <T>[];
-  final results = List<T?>.filled(items.length, null);
+  if (items.isEmpty) return <R>[];
+  final results = List<R?>.filled(items.length, null);
   var cursor = 0;
   Future<void> pump() async {
     while (true) {
@@ -30,5 +31,5 @@ Future<List<T>> runPool<T>(
   await Future.wait(
     List.generate(limit.clamp(1, items.length), (_) => pump()),
   );
-  return results.cast<T>();
+  return results.cast<R>();
 }

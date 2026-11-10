@@ -55,7 +55,7 @@ manager when deploying beyond the local foundation.
 | S3_DOWNLOAD_TTL_SECONDS | Presigned GET lifetime; default `60` |
 | ATTACHMENT_PENDING_TTL_MS | Abandoned-upload expiry; default `7200000` (2 hours) |
 | ATTACHMENT_DAILY_QUOTA_BYTES | Per-uploader 24-hour quota; default 8 GiB |
-| ATTACHMENT_RATE_LIMIT | Attachment routes per IP per minute; default `60` |
+| ATTACHMENT_RATE_LIMIT | Attachment routes per IP per minute; default `180` |
 
 For production set `NODE_ENV=production`. If overriding `DATABASE_URL`, URL-encode
 credentials. Compose credentials are encoded automatically. No secrets are baked

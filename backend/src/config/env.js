@@ -116,7 +116,7 @@ export function loadEnv(source = process.env) {
       1024 * 1024,
       10 * 1024 * 1024 * 1024,
     ),
-    attachmentRateLimit: integer('ATTACHMENT_RATE_LIMIT', 60, 1, 1000),
+    attachmentRateLimit: integer('ATTACHMENT_RATE_LIMIT', 180, 1, 1000),
     firebaseServiceAccountPath: source.FIREBASE_SERVICE_ACCOUNT_PATH ?? '',
     trustProxy: source.TRUST_PROXY === '1' || source.TRUST_PROXY === 'true',
     chatAttachmentsEnabled: flagEnabled(source.CHAT_ATTACHMENTS_ENABLED, nodeEnv !== 'production'),

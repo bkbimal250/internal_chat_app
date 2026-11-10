@@ -9,6 +9,8 @@ import { applySyncRecords, newestChangeSeq, newestSequence, upsertMessage } from
 import { useAuth } from '@/hooks/use-auth'
 import { usePresenceStore, useTypingStore, useUiStore } from '@/stores/ui-store'
 import { useAuthStore } from '@/stores/auth-store'
+import { viewedConversationForNotifications } from '@/lib/notify-incoming'
+import { MessageNotifyHost } from '@/features/realtime/MessageNotifyHost'
 
 export function RealtimeProvider({ children }) {
   const { isAuthenticated, mustChangePassword } = useAuth()
@@ -21,6 +23,7 @@ export function RealtimeProvider({ children }) {
   useEffect(() => {
     const unsubStatus = websocketManager.subscribeStatus(async (status) => {
       setConnectionStatus(status)
+      if (status === 'disconnected' || status === 'idle') useTypingStore.getState().clearAll()
       if (status !== 'unauthorized') return
       try {
         const payload = await refreshAccessToken()
@@ -31,10 +34,11 @@ export function RealtimeProvider({ children }) {
       }
     })
     const unsubscribe = websocketManager.subscribe(async (event) => {
+      const currentUserId = useAuthStore.getState().user?.id
       applyRealtimeEvent(event, {
-        currentUserId: useAuthStore.getState().user?.id,
-        viewedConversationId: useUiStore.getState().activeConversationId,
-        onTyping: setTyping,
+        currentUserId,
+        viewedConversationId: viewedConversationForNotifications(useUiStore.getState().activeConversationId),
+        onTyping: (conversationId, userId, typing) => setTyping(conversationId, userId, typing, currentUserId),
         onPresence: setOnline,
         onRevoked: () => useAuthStore.getState().reset(),
       })
@@ -93,5 +97,10 @@ export function RealtimeProvider({ children }) {
     return undefined
   }, [isAuthenticated, mustChangePassword])
 
-  return children
+  return (
+    <>
+      <MessageNotifyHost />
+      {children}
+    </>
+  )
 }

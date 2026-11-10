@@ -31,6 +31,7 @@ import {
   upsertMessage,
 } from '@/lib/messages'
 import { conversationTitle, conversationPeer, previewText } from '@/lib/conversations'
+import { remoteTypingNames, typingLabel } from '@/lib/typing-label'
 import { MessageActions, ReactionChips } from '@/features/messages/MessageActions'
 import { formatDateSeparator, formatMessageTime, sameDay } from '@/lib/time'
 import { canAddGroupMembers, canSendGroupMessages, groupSettings, memberRole } from '@/lib/permissions'
@@ -62,8 +63,23 @@ import { cn } from '@/lib/utils'
 import { getErrorMessage } from '@/services/api-error'
 import { toast } from 'sonner'
 import { AttachmentMedia, UploadProgress } from '@/features/messages/AttachmentViews'
-import { ATTACHMENT_ACCEPT, uploadAttachment } from '@/features/messages/attachment-upload'
-import { clearTransfer, loadTransfers, saveTransfers } from '@/features/messages/transfer-runtime'
+import { AttachmentDraftTray } from '@/features/messages/AttachmentDraftTray'
+import {
+  addSelectedFiles,
+  messageAttachments,
+  readMediaDuration,
+  revokePreview,
+  revokePreviews,
+} from '@/features/messages/attachment-batch'
+import {
+  ATTACHMENT_ACCEPT,
+  completeAttachmentBatch,
+  FILE_UPLOAD_CONCURRENCY,
+  uploadAttachment,
+  uploadToStorage,
+} from '@/features/messages/attachment-upload'
+import { clearTransfer, loadTransfers, runPool, saveTransfers } from '@/features/messages/transfer-runtime'
+import { attachmentsApi } from '@/services/api'
 import { AttachMenu } from '@/features/messages/AttachMenu'
 import { startVoiceRecording } from '@/features/messages/voice-record'
 import { useCallStore } from '@/features/calls/call-store'
@@ -166,8 +182,14 @@ function MessageBubble({
               <p className="whitespace-pre-wrap break-words" data-testid="message-body">
                 This message was deleted
               </p>
-            ) : message.attachment ? (
-              <AttachmentMedia attachment={message.attachment} caption={message.content} mine={mine} />
+            ) : messageAttachments(message).length ? (
+              <AttachmentMedia
+                attachment={message.attachment}
+                attachments={messageAttachments(message)}
+                caption={message.content}
+                conversationId={message.conversationId}
+                mine={mine}
+              />
             ) : (
               <p className="whitespace-pre-wrap break-words" data-testid="message-body">
                 {message.content}
@@ -215,6 +237,8 @@ function Composer({ conversationId, apiRef, canSend = true }) {
   const setEmojiOpen = useUiStore((state) => state.setEmojiOpen)
   const [text, setText] = useState(editing?.content ?? '')
   const [uploads, setUploads] = useState([])
+  const [drafts, setDrafts] = useState([])
+  const [sendingDrafts, setSendingDrafts] = useState(false)
   const [mediaQuality, setMediaQuality] = useState('auto')
   const typingRef = useRef(null)
   const inputRef = useRef(null)
@@ -252,6 +276,11 @@ function Composer({ conversationId, apiRef, canSend = true }) {
   }
 
   async function send() {
+    if (drafts.length) {
+      await sendDrafts()
+      return
+    }
+    emitTyping(false)
     const content = String(inputRef.current?.value ?? text).trim()
     if (!content) return
     if (editing) {
@@ -396,9 +425,158 @@ function Composer({ conversationId, apiRef, canSend = true }) {
     }
   }
 
+  function queueFiles(incoming) {
+    if (!canSend || !attachmentsEnabled) return
+    const files = Array.isArray(incoming) ? incoming : incoming ? [incoming] : []
+    if (!files.length) return
+    const { items, errors } = addSelectedFiles(drafts, files)
+    errors.forEach((error) => toast.error(error.message))
+    setDrafts(items)
+    items
+      .filter((item) => !item.duration && (item.kind === 'video' || item.kind === 'audio'))
+      .forEach((item) => {
+        readMediaDuration(item.file).then((duration) => {
+          if (!duration) return
+          setDrafts((current) => current.map((row) => (row.id === item.id ? { ...row, duration } : row)))
+        })
+      })
+  }
+
+  async function removeDraft(item) {
+    revokePreview(item)
+    item.controller?.abort()
+    if (item.attachmentId) await attachmentsApi.remove(item.attachmentId).catch(() => {})
+    setDrafts((current) => current.filter((row) => row.id !== item.id))
+  }
+
+  function clearDrafts() {
+    for (const item of drafts) {
+      revokePreview(item)
+      item.controller?.abort()
+      if (item.attachmentId) attachmentsApi.remove(item.attachmentId).catch(() => {})
+    }
+    setDrafts([])
+  }
+
+  async function uploadDraft(item) {
+    if (!item.file) {
+      toast.error('Reselect the original file to resume this upload.')
+      fileRef.current?.click()
+      return item
+    }
+    const controller = new AbortController()
+    setDrafts((current) =>
+      current.map((row) =>
+        row.id === item.id ? { ...row, status: 'uploading', error: false, progress: row.progress || 0, controller } : row,
+      ),
+    )
+    try {
+      const stored = await uploadToStorage({
+        conversationId,
+        file: item.file,
+        quality: mediaQuality,
+        signal: controller.signal,
+        attachmentId: item.attachmentId,
+        completedParts: item.parts ?? [],
+        abortOnCancel: true,
+        onState: (state) => {
+          setDrafts((current) => current.map((row) => (row.id === item.id ? { ...row, ...state } : row)))
+        },
+        onProgress: (progress) => {
+          const next = typeof progress === 'number' ? { percent: progress } : progress
+          setDrafts((current) =>
+            current.map((row) => (row.id === item.id ? { ...row, ...next, progress: next.percent ?? 0, status: 'uploading' } : row)),
+          )
+        },
+      })
+      const uploaded = {
+        ...item,
+        status: 'uploaded',
+        progress: 100,
+        attachmentId: stored.init.id,
+        parts: stored.parts,
+        controller,
+      }
+      setDrafts((current) => current.map((row) => (row.id === item.id ? uploaded : row)))
+      return uploaded
+    } catch (error) {
+      if (error.cancelled) {
+        setDrafts((current) => current.filter((row) => row.id !== item.id))
+        return null
+      }
+      setDrafts((current) =>
+        current.map((row) =>
+          row.id === item.id
+            ? { ...row, status: 'failed', error: true, attachmentId: error.attachmentId ?? row.attachmentId, parts: error.parts ?? row.parts }
+            : row,
+        ),
+      )
+      toast.error(getErrorMessage(error))
+      return { ...item, status: 'failed', error: true }
+    }
+  }
+
+  async function sendDrafts() {
+    if (!drafts.length || sendingDrafts) return
+    emitTyping(false)
+    setSendingDrafts(true)
+    const caption = String(inputRef.current?.value ?? text).trim()
+    const clientMessageId = crypto.randomUUID()
+    const replyToMessageId = replyTo?.id
+    try {
+      const pending = drafts.filter((item) => item.status !== 'uploaded' || !item.attachmentId)
+      const already = drafts.filter((item) => item.status === 'uploaded' && item.attachmentId)
+      const uploaded = (await runPool(pending, FILE_UPLOAD_CONCURRENCY, uploadDraft)).filter(Boolean)
+      const ready = [...already, ...uploaded.filter((item) => item.status === 'uploaded' && item.attachmentId)]
+      if (ready.length !== drafts.length) {
+        toast.error('Some files failed to upload. Retry or remove them, then send.')
+        return
+      }
+      const saved = await completeAttachmentBatch({
+        conversationId,
+        clientMessageId,
+        caption,
+        replyToMessageId,
+        items: ready.map((item) => ({
+          id: item.attachmentId,
+          ...(item.parts?.length ? { parts: item.parts } : {}),
+        })),
+      })
+      queryClient.setQueryData(queryKeys.messages(conversationId), (current) => ({
+        ...current,
+        data: upsertMessage(current?.data ?? [], saved),
+      }))
+      touchConversationFromMessage(conversationId, saved)
+      revokePreviews(drafts)
+      setDrafts([])
+      setText('')
+      setReplyTo(null)
+    } catch (error) {
+      toast.error(getErrorMessage(error))
+    } finally {
+      setSendingDrafts(false)
+    }
+  }
+
   useEffect(() => {
-    if (apiRef) apiRef.current = { upload: startUpload }
+    if (apiRef) apiRef.current = { upload: queueFiles }
   })
+
+  const draftsRef = useRef(drafts)
+  draftsRef.current = drafts
+  useEffect(() => {
+    const stopTyping = () =>
+      websocketManager.send({
+        event: 'typing.stop',
+        data: { conversationId },
+      })
+    stopTyping()
+    return () => {
+      stopTyping()
+      revokePreviews(draftsRef.current)
+      useTypingStore.getState().clearConversation(conversationId)
+    }
+  }, [conversationId])
 
   useEffect(() => () => voiceRef.current?.cancel(), [])
 
@@ -449,8 +627,7 @@ function Composer({ conversationId, apiRef, canSend = true }) {
       onDrop={(event) => {
         event.preventDefault()
         if (!canSend) return
-        const file = event.dataTransfer.files?.[0]
-        if (file) startUpload(file)
+        queueFiles(Array.from(event.dataTransfer.files || []))
       }}
     >
       {uploads.map((item) => (
@@ -461,6 +638,15 @@ function Composer({ conversationId, apiRef, canSend = true }) {
           onRetry={(row) => startUpload(row.file, row)}
         />
       ))}
+      <AttachmentDraftTray
+        items={drafts}
+        sending={sendingDrafts}
+        onRemove={removeDraft}
+        onRetry={(item) => uploadDraft(item)}
+        onCancel={(item) => item.controller?.abort()}
+        onAddMore={() => fileRef.current?.click()}
+        onClear={clearDrafts}
+      />
       {!canSend ? (
         <div className="border-t bg-card px-4 py-3 text-center text-sm text-muted-foreground" data-testid="admins-only-composer">
           Only group admins can send messages.
@@ -496,13 +682,19 @@ function Composer({ conversationId, apiRef, canSend = true }) {
           type="file"
           className="hidden"
           accept={ATTACHMENT_ACCEPT}
+          multiple
           data-testid="attachment-input"
           onChange={(event) => {
-            const file = event.target.files?.[0]
+            const files = Array.from(event.target.files || [])
             event.target.value = ''
             const resume = resumePickerRef.current
             resumePickerRef.current = null
-            if (file) startUpload(file, resume)
+            if (resume && files[0]) {
+              startUpload(files[0], resume)
+              if (files.length > 1) queueFiles(files.slice(1))
+              return
+            }
+            queueFiles(files)
           }}
         />
         ) : null}
@@ -518,7 +710,7 @@ function Composer({ conversationId, apiRef, canSend = true }) {
           </div>
         ) : (
           <div className="flex min-w-0 flex-1 items-end rounded-[28px] border bg-card px-1.5 py-1 shadow-xs">
-            {attachmentsEnabled ? <AttachMenu disabled={!canSend} onPick={startUpload} /> : null}
+            {attachmentsEnabled ? <AttachMenu disabled={!canSend || sendingDrafts} onPick={queueFiles} /> : null}
             {attachmentsEnabled ? (
             <Button
               type="button"
@@ -551,6 +743,12 @@ function Composer({ conversationId, apiRef, canSend = true }) {
               aria-label="Message"
               data-testid="message-composer"
               className="min-h-9 max-h-40 flex-1 resize-none border-0 bg-transparent px-1 py-2 shadow-none focus-visible:ring-0"
+              onPaste={(event) => {
+                const files = Array.from(event.clipboardData?.files || [])
+                if (!files.length) return
+                event.preventDefault()
+                queueFiles(files)
+              }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault()
@@ -893,10 +1091,8 @@ export function MessagePane({ conversationId }) {
   const isGroup = details.data?.type === 'group'
   const role = memberRole(details.data?.members, user?.id)
   const canSend = !isGroup || canSendGroupMessages(role, groupSettings(details.data))
-  const typingNames = typingIds
-    .filter((id) => id !== user?.id)
-    .map((id) => details.data?.members?.find((member) => member.id === id)?.displayName)
-    .filter(Boolean)
+  const typingNames = remoteTypingNames(typingIds, details.data?.members, user?.id)
+  const typingCopy = typingLabel(typingNames)
 
   if (messagesQuery.isLoading || details.isLoading) {
     return (
@@ -925,8 +1121,8 @@ export function MessagePane({ conversationId }) {
       onDrop={(event) => {
         event.preventDefault()
         setDropping(false)
-        const file = event.dataTransfer.files?.[0]
-        if (file && canSend) composerApi.current?.upload(file)
+        const files = Array.from(event.dataTransfer.files || [])
+        if (files.length && canSend) composerApi.current?.upload(files)
       }}
     >
       <header className="flex h-16 items-center justify-between gap-2 border-b bg-card px-2 shadow-xs md:px-3">
@@ -954,8 +1150,8 @@ export function MessagePane({ conversationId }) {
             <div className="min-w-0">
               <p className="truncate font-semibold">{title}</p>
               <p className="truncate text-xs text-muted-foreground" data-testid="chat-subtitle">
-                {typingNames.length
-                  ? `${typingNames.join(', ')} typing…`
+                {typingCopy
+                  ? typingCopy
                   : isGroup
                     ? `${details.data.members?.length ?? 0} members`
                     : onlineMap[peer?.id]

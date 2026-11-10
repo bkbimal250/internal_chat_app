@@ -58,7 +58,7 @@ You supply the password. Do not publish 5432.
 | `S3_DOWNLOAD_TTL_SECONDS` | Presign GET expiry | Optional | `60` | VPS env | api | — |
 | `ATTACHMENT_PENDING_TTL_MS` | Abandoned upload expiry | Optional | `7200000` | VPS env | api | — |
 | `ATTACHMENT_DAILY_QUOTA_BYTES` | Daily quota | Optional | `8589934592` | VPS env | api | — |
-| `ATTACHMENT_RATE_LIMIT` | Upload API rate | Optional | `60` | VPS env | api | — |
+| `ATTACHMENT_RATE_LIMIT` | Upload API rate | Optional | `180` | VPS env | api | — |
 
 You must create the cloud bucket, block public listing, enable CORS for the HTTPS site when browsers PUT directly to the provider, and keep objects private. LocalStack is not the recommended production store.
 

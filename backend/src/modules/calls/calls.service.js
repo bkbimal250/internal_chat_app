@@ -296,6 +296,7 @@ export function callsService(app, config) {
     async end(id, userId, sessionId) {
       ensureEnabled();
       const row = requireParticipant(id, userId);
+      if (isTerminalCallStatus(row.status)) return row;
       const action = row.status === 'connecting' || row.status === 'connected' ? 'end' : row.callerId === userId ? 'cancel' : 'reject';
       const updated = apply(row, action, { sessionId });
       emitParticipants(updated, eventForStatus(updated.status, action));

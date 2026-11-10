@@ -28,19 +28,17 @@ class MediaUploader {
 
   final ApiClient _api;
 
-  Future<Map<String, dynamic>> upload({
+  Future<Map<String, dynamic>> uploadToStorage({
     required String conversationId,
     required String path,
     required String fileName,
     required String mimeType,
-    String? caption,
-    String? replyToMessageId,
-    String? clientMessageId,
     String? attachmentId,
     List<Map<String, dynamic>> completedParts = const [],
     CancelToken? cancelToken,
     void Function(MediaUploadProgress progress)? onProgress,
     void Function(Map<String, dynamic> state)? onState,
+    bool abortOnCancel = true,
   }) async {
     final file = File(path);
     if (!await file.exists()) {
@@ -67,7 +65,7 @@ class MediaUploader {
             },
           )
         : {'id': attachmentId, 'mode': size > singlePutMaxBytes ? 'multipart' : 'single'};
-    onState?.call({'attachmentId': init['id'], 'clientMessageId': clientMessageId, 'phase': 'uploading'});
+    onState?.call({'attachmentId': init['id'], 'phase': 'uploading'});
     try {
       final parts = <Map<String, dynamic>>[
         ...completedParts.map((part) => {'partNumber': part['partNumber'], 'etag': part['etag']}),
@@ -104,7 +102,6 @@ class MediaUploader {
           parts.add({'partNumber': partNumber, 'etag': etag});
           onState?.call({
             'attachmentId': init['id'],
-            'clientMessageId': clientMessageId,
             'parts': [...parts],
           });
           emit('uploading', end);
@@ -124,28 +121,80 @@ class MediaUploader {
           cancelToken,
         );
       }
-      emit('finalizing', size);
-      return await _finalize(
-        init['id'] as String,
-        {
-          'clientMessageId': ?clientMessageId,
-          if (caption != null && caption.trim().isNotEmpty) 'caption': caption.trim(),
-          'replyToMessageId': ?replyToMessageId,
-          if (parts.isNotEmpty)
-            'parts': parts
-                .map((part) => {'partNumber': part['partNumber'], 'etag': part['etag']})
-                .toList(),
-        },
-        cancelToken,
-      );
+      emit('uploaded', size);
+      return {
+        'id': init['id'],
+        'parts': parts,
+      };
     } catch (error) {
-      if (_isCancel(error) && init['id'] != null) {
+      if (abortOnCancel && _isCancel(error) && init['id'] != null) {
         try {
           await _api.delete('/api/v1/attachments/${init['id']}');
         } catch (_) {}
       }
       rethrow;
     }
+  }
+
+  Future<Map<String, dynamic>> completeBatch({
+    required String conversationId,
+    required List<Map<String, dynamic>> items,
+    String? caption,
+    String? replyToMessageId,
+    String? clientMessageId,
+    CancelToken? cancelToken,
+  }) {
+    return _postWithRetry(
+      '/api/v1/conversations/$conversationId/attachments/complete',
+      {
+        'clientMessageId': ?clientMessageId,
+        if (caption != null && caption.trim().isNotEmpty) 'caption': caption.trim(),
+        'replyToMessageId': ?replyToMessageId,
+        'items': items,
+      },
+      cancelToken,
+    );
+  }
+
+  Future<Map<String, dynamic>> upload({
+    required String conversationId,
+    required String path,
+    required String fileName,
+    required String mimeType,
+    String? caption,
+    String? replyToMessageId,
+    String? clientMessageId,
+    String? attachmentId,
+    List<Map<String, dynamic>> completedParts = const [],
+    CancelToken? cancelToken,
+    void Function(MediaUploadProgress progress)? onProgress,
+    void Function(Map<String, dynamic> state)? onState,
+  }) async {
+    final stored = await uploadToStorage(
+      conversationId: conversationId,
+      path: path,
+      fileName: fileName,
+      mimeType: mimeType,
+      attachmentId: attachmentId,
+      completedParts: completedParts,
+      cancelToken: cancelToken,
+      onProgress: onProgress,
+      onState: (state) => onState?.call({...state, 'clientMessageId': clientMessageId}),
+    );
+    onProgress?.call(MediaUploadProgress(phase: 'finalizing', sent: 1, total: 1));
+    return _finalize(
+      stored['id'] as String,
+      {
+        'clientMessageId': ?clientMessageId,
+        if (caption != null && caption.trim().isNotEmpty) 'caption': caption.trim(),
+        'replyToMessageId': ?replyToMessageId,
+        if ((stored['parts'] as List).isNotEmpty)
+          'parts': (stored['parts'] as List)
+              .map((part) => {'partNumber': (part as Map)['partNumber'], 'etag': part['etag']})
+              .toList(),
+      },
+      cancelToken,
+    );
   }
 
   Future<String> _putPart(
@@ -195,12 +244,16 @@ class MediaUploader {
     throw lastError ?? const MediaLimitException('Upload failed');
   }
 
-  Future<Map<String, dynamic>> _finalize(String id, Map<String, dynamic> body, CancelToken? cancelToken) async {
+  Future<Map<String, dynamic>> _finalize(String id, Map<String, dynamic> body, CancelToken? cancelToken) {
+    return _postWithRetry('/api/v1/attachments/$id/finalize', body, cancelToken);
+  }
+
+  Future<Map<String, dynamic>> _postWithRetry(String path, Map<String, dynamic> body, CancelToken? cancelToken) async {
     Object? lastError;
     for (var attempt = 0; attempt < 4; attempt += 1) {
       if (cancelToken?.isCancelled == true) throw const MediaLimitException('Upload cancelled');
       try {
-        return await _api.post<Map<String, dynamic>>('/api/v1/attachments/$id/finalize', data: body);
+        return await _api.post<Map<String, dynamic>>(path, data: body);
       } catch (error) {
         lastError = error;
         final status = error is ApiError ? error.status : null;

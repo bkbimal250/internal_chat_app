@@ -172,6 +172,12 @@ export function objectStorage(config, logger, { internalClient, publicClient: pu
         throw error;
       }
     },
+    async getObjectStream(key) {
+      requireEnabled();
+      const object = await internal.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+      if (!object.Body) throw new AppError('Uploaded object was not found', 404, 'NOT_FOUND');
+      return object.Body;
+    },
     async getObjectBuffer(key, maxBytes) {
       requireEnabled();
       const object = await internal.send(new GetObjectCommand({ Bucket: bucket, Key: key }));

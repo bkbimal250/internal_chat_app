@@ -85,6 +85,13 @@
       "when": 1793610000000,
       "tag": "0011_otp_challenge_purpose",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793700000000,
+      "tag": "0012_attachment_batches",
+      "breakpoints": true
     }
   ]
 }

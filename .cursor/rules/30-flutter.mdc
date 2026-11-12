@@ -1,0 +1,19 @@
+---
+description: MiChat Flutter Android — session, avatars, no ZIP, no new keystores
+globs: mobile/company_chat/**
+alwaysApply: false
+---
+
+# Flutter
+
+Stack: Flutter/Dart in `mobile/company_chat`. Android is the current priority. Do not do iOS work unless explicitly requested.
+
+Preserve secure login and session persistence. Do not clear refresh tokens on transient network/5xx errors. Avoid repeated splash/session restoration and false logout.
+
+Optimize conversation lists, avatar loading, and message rendering without rewriting the app. Reuse existing Riverpod state and Dio/WebSocket networking.
+
+Preserve foreground WebRTC audio calling and up-to-50-file uploads. Mobile supports individual attachment downloads; there is NO ZIP Download All.
+
+Never embed AWS credentials or TURN_SECRET. Use existing Android release signing assets; never generate a replacement keystore without authorization.
+
+Run `flutter analyze` and relevant tests. Build APK/AAB only when requested or required for a release.

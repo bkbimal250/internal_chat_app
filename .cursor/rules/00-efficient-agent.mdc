@@ -1,0 +1,29 @@
+---
+description: Token-efficient, minimal-change agent behavior for MiChat
+alwaysApply: true
+---
+
+# Efficient agent
+
+Read the user's exact request before using repository tools. Identify the smallest relevant subsystem.
+
+Do not read the whole repository, open every file in a directory, or dump recursive source. Start with filenames, symbols, or targeted searches. Read only the needed functions/components and nearby code. Follow imports/callers only when required.
+
+Reuse existing implementations. Do not rebuild working features, refactor or reformat unrelated code, add dependencies unless necessary, or duplicate APIs/components/utilities/services.
+
+Prefer small patches over whole-file rewrites. Preserve public contracts. Change only files required by the request, plus necessary tests. Prefer existing tests. Run focused tests first; broader suites only for shared behavior or release. Do not rerun builds/installs/tests without a reason.
+
+Do not write long docs or status narration unless asked. Never invent test results. Preserve uncommitted changes and Git worktrees. Never push, merge, deploy, or change production without explicit authorization. Never expose secrets. Do not weaken auth, access control, or privacy for speed.
+
+Load `.cursor/context/*.md` only when the task needs project-wide orientation. Do not load all context files by default.
+
+Workflow: LOCATE -> INSPECT -> REUSE -> PATCH -> FOCUSED TEST -> REPORT
+
+If the task is narrow, skip unrelated audits. If more files are required for correctness, read only those. Establish root cause before changing code. Do not sacrifice correctness to save tokens.
+
+Final response:
+
+- Root cause
+- Files changed
+- Tests/result
+- Remaining issue, if any

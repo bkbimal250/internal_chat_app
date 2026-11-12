@@ -1,0 +1,17 @@
+---
+description: MiChat web — reuse React/Vite UI, preserve media and realtime
+globs: frontend/**/*.js,frontend/**/*.jsx,frontend/**/*.css
+alwaysApply: false
+---
+
+# Web
+
+Stack: React + Vite, JavaScript, Tailwind CSS, existing shadcn/ui patterns.
+
+Reuse the current design system and components. Keep the MiChat visual identity. Do not redesign unrelated screens.
+
+Preserve messaging, typing indicators, notifications, and WebRTC behavior where present. Keep the WhatsApp-style media editor and up-to-50-file selection.
+
+ZIP Download All is WEB ONLY. Do not port it to mobile.
+
+Avoid duplicate client state and unnecessary re-renders. Prefer focused component tests next to the changed files.

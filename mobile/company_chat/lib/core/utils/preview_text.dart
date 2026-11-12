@@ -1,3 +1,35 @@
+String senderDisplayName(Map<String, dynamic>? member, {String fallback = 'Colleague'}) {
+  final full = (member?['fullName'] as String?)?.trim() ?? '';
+  if (full.isNotEmpty) return full;
+  final display = (member?['displayName'] as String?)?.trim() ?? '';
+  if (display.isNotEmpty) return display;
+  return fallback;
+}
+
+String conversationPreview(
+  Map<String, dynamic> conversation, {
+  String? currentUserId,
+  bool typing = false,
+}) {
+  if (typing) return 'typing…';
+  final latest = conversation['latestMessage'] as Map<String, dynamic>?;
+  final body = previewText(latest);
+  if (conversation['type'] != 'group' || latest == null) return body;
+  if (latest['deletedAt'] != null) return body;
+  final senderId = latest['senderId'] as String?;
+  if (senderId == null || senderId.isEmpty) return body;
+  if (senderId == currentUserId) return 'You: $body';
+  final members = (conversation['members'] as List?) ?? [];
+  Map<String, dynamic>? sender;
+  for (final member in members) {
+    if (member is Map && member['id'] == senderId) {
+      sender = Map<String, dynamic>.from(member);
+      break;
+    }
+  }
+  return '${senderDisplayName(sender, fallback: 'Member')}: $body';
+}
+
 String previewText(Map<String, dynamic>? message) {
   if (message == null) return 'No messages yet';
   if (message['deletedAt'] != null) return 'Message deleted';
@@ -35,9 +67,16 @@ int conversationActivityAt(Map<String, dynamic> conversation) {
   return parsed?.millisecondsSinceEpoch ?? 0;
 }
 
+int conversationPinRank(Map<String, dynamic> conversation) {
+  final value = conversation['pinnedAt'];
+  return value != null && value.toString().isNotEmpty ? 0 : 1;
+}
+
 List<Map<String, dynamic>> sortConversations(List<Map<String, dynamic>> rows) {
   final next = [...rows];
   next.sort((a, b) {
+    final pinned = conversationPinRank(a) - conversationPinRank(b);
+    if (pinned != 0) return pinned;
     final delta = conversationActivityAt(b) - conversationActivityAt(a);
     if (delta != 0) return delta;
     return (b['id'] ?? '').toString().compareTo((a['id'] ?? '').toString());

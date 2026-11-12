@@ -1,7 +1,13 @@
+import 'dart:async';
+
 import 'package:company_chat/app/providers.dart';
 import 'package:company_chat/core/network/api_client.dart';
+import 'package:company_chat/core/network/api_error.dart';
 import 'package:company_chat/core/notifications/notification_prefs.dart';
 import 'package:company_chat/core/notifications/push_notifications.dart';
+import 'package:company_chat/core/notifications/unread_inbox_store.dart';
+import 'package:company_chat/core/storage/app_database.dart';
+import 'package:company_chat/core/storage/media_cache.dart';
 import 'package:company_chat/shared/models/user_profile.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,10 +23,11 @@ class AuthState {
   bool get mustChangePassword => user?.mustChangePassword == true;
 }
 
-enum AuthStatus { unknown, anonymous, authenticated }
+enum AuthStatus { unknown, anonymous, authenticated, unavailable }
 
 class AuthController extends StateNotifier<AuthState> {
   AuthController(this._ref) : super(const AuthState()) {
+    _api.onSessionInvalid = _forceAnonymous;
     restore();
   }
 
@@ -28,23 +35,64 @@ class AuthController extends StateNotifier<AuthState> {
   ApiClient get _api => _ref.read(apiClientProvider);
 
   Future<void> restore() async {
+    if (!mounted) return;
+    state = const AuthState(status: AuthStatus.unknown);
     final store = _ref.read(sessionStoreProvider);
     final refresh = await store.readRefreshToken();
+    if (!mounted) return;
     if (refresh == null || refresh.isEmpty) {
       state = const AuthState(status: AuthStatus.anonymous);
       return;
     }
     try {
       final data = await _api.refresh();
-      final user = UserProfile.fromJson(data['user'] as Map<String, dynamic>);
-      state = AuthState(user: user, status: AuthStatus.authenticated);
+      var profile = data['user'] as Map<String, dynamic>;
+      try {
+        profile = await _api.get<Map<String, dynamic>>('/api/v1/auth/me');
+      } on ApiError catch (error) {
+        if (error.isSessionInvalid) rethrow;
+      }
+      if (!mounted) return;
+      state = AuthState(
+        user: UserProfile.fromJson(profile),
+        status: AuthStatus.authenticated,
+      );
+      _ref.read(currentUserIdProvider.notifier).state = state.user?.id;
+      await store.writeUserId(state.user?.id);
+      if (!mounted) return;
       _ref.read(chatSocketProvider).connect();
-      await PushNotifications.register(_api);
-      await _ref.read(notificationPrefsProvider.notifier).load();
+      try {
+        await PushNotifications.register(_api);
+        await _ref.read(notificationPrefsProvider.notifier).load();
+      } catch (_) {}
+    } on ApiError catch (error) {
+      if (error.isSessionInvalid) {
+        if (!mounted) return;
+        await _clearAccountCaches(state.user?.id ?? await store.readUserId());
+        if (!mounted) return;
+        await store.clear();
+        if (!mounted) return;
+        state = const AuthState(status: AuthStatus.anonymous);
+        return;
+      }
+      if (!mounted) return;
+      state = const AuthState(status: AuthStatus.unavailable);
     } catch (_) {
-      await store.clear();
-      state = const AuthState(status: AuthStatus.anonymous);
+      if (!mounted) return;
+      state = const AuthState(status: AuthStatus.unavailable);
     }
+  }
+
+  void _forceAnonymous() {
+    if (!mounted) return;
+    final userId = state.user?.id;
+    _ref.read(chatSocketProvider).disconnect();
+    unawaited(() async {
+      await _clearAccountCaches(userId ?? await _ref.read(sessionStoreProvider).readUserId());
+    }());
+    _ref.read(currentUserIdProvider.notifier).state = null;
+    if (!mounted) return;
+    state = const AuthState(status: AuthStatus.anonymous);
   }
 
   Future<void> login({required String username, required String password}) async {
@@ -90,17 +138,37 @@ class AuthController extends StateNotifier<AuthState> {
   }
 
   Future<void> logout() async {
+    final userId = state.user?.id ?? await _ref.read(sessionStoreProvider).readUserId();
     try {
       await _api.post('/api/v1/auth/logout');
     } catch (_) {}
     _ref.read(chatSocketProvider).disconnect();
+    await _clearAccountCaches(userId);
     await _ref.read(sessionStoreProvider).clear();
+    _ref.read(currentUserIdProvider.notifier).state = null;
     state = const AuthState(status: AuthStatus.anonymous);
+  }
+
+  Future<void> _clearAccountCaches(String? userId) async {
+    try {
+      await _ref.read(conversationListStoreProvider).clear(userId);
+    } catch (_) {}
+    try {
+      await unreadInboxStore.clear(userId);
+    } catch (_) {}
+    try {
+      await AppDatabase.deleteStore(userId);
+    } catch (_) {}
+    try {
+      await clearMediaCache();
+    } catch (_) {}
   }
 
   void _apply(Map<String, dynamic> data) {
     final tokens = AuthTokens.fromJson(data);
     state = AuthState(user: tokens.user, status: AuthStatus.authenticated);
+    _ref.read(currentUserIdProvider.notifier).state = state.user?.id;
+    unawaited(_ref.read(sessionStoreProvider).writeUserId(state.user?.id));
     _ref.read(chatSocketProvider).connect();
     PushNotifications.register(_api);
     _ref.read(notificationPrefsProvider.notifier).load();

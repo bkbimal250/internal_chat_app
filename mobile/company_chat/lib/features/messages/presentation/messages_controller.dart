@@ -4,11 +4,13 @@ import 'dart:io';
 import 'package:company_chat/app/providers.dart';
 import 'package:company_chat/core/network/api_client.dart';
 import 'package:company_chat/core/network/api_error.dart';
+import 'package:company_chat/core/storage/cache_policy.dart';
 import 'package:company_chat/features/auth/presentation/auth_controller.dart';
 import 'package:company_chat/features/media/media_limits.dart';
 import 'package:company_chat/features/media/media_prepare.dart';
 import 'package:company_chat/features/media/media_upload.dart';
 import 'package:company_chat/features/media/transfer_runtime.dart';
+import 'package:company_chat/features/messages/message_actions.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
@@ -28,6 +30,8 @@ class MessagesState {
     this.uploadOriginalSize = 0,
     this.uploadCompressedSize = 0,
     this.uploadEta,
+    this.hasOlder = false,
+    this.loadingOlder = false,
   });
 
   final List<Map<String, dynamic>> messages;
@@ -43,6 +47,8 @@ class MessagesState {
   final int uploadOriginalSize;
   final int uploadCompressedSize;
   final Duration? uploadEta;
+  final bool hasOlder;
+  final bool loadingOlder;
 
   MessagesState copyWith({
     List<Map<String, dynamic>>? messages,
@@ -58,6 +64,8 @@ class MessagesState {
     int? uploadOriginalSize,
     int? uploadCompressedSize,
     Duration? uploadEta,
+    bool? hasOlder,
+    bool? loadingOlder,
     bool clearReply = false,
     bool clearEditing = false,
     bool clearEta = false,
@@ -76,6 +84,8 @@ class MessagesState {
       uploadOriginalSize: uploadOriginalSize ?? this.uploadOriginalSize,
       uploadCompressedSize: uploadCompressedSize ?? this.uploadCompressedSize,
       uploadEta: clearEta ? null : (uploadEta ?? this.uploadEta),
+      hasOlder: hasOlder ?? this.hasOlder,
+      loadingOlder: loadingOlder ?? this.loadingOlder,
     );
   }
 }
@@ -83,15 +93,25 @@ class MessagesState {
 class MessagesController extends StateNotifier<MessagesState> {
   MessagesController(this._ref, this.conversationId) : super(const MessagesState()) {
     _sub = _ref.read(chatSocketProvider).events.listen(_onEvent);
+    _userSub = _ref.listen<String?>(currentUserIdProvider, (previous, next) {
+      if (previous == next) return;
+      _loading = null;
+      state = const MessagesState();
+      if (next != null && next.isNotEmpty) load();
+    });
     load();
   }
 
   final Ref _ref;
   final String conversationId;
   StreamSubscription<Map<String, dynamic>>? _sub;
+  ProviderSubscription<String?>? _userSub;
+  Future<void>? _loading;
   ApiClient get _api => _ref.read(apiClientProvider);
 
-  Future<void> load() async {
+  Future<void> load() => _loading ??= _load().whenComplete(() => _loading = null);
+
+  Future<void> _load() async {
     try {
       await _ref.read(databaseProvider).dropExpired();
       final cached = _live(await _ref.read(databaseProvider).loadMessages(conversationId));
@@ -99,14 +119,23 @@ class MessagesController extends StateNotifier<MessagesState> {
         state = state.copyWith(messages: _sort(cached), loading: false);
       }
       final details = await _api.get<Map<String, dynamic>>('/api/v1/conversations/$conversationId');
-      final afterSeq = cached.isEmpty
-          ? 0
-          : cached.map((row) => row['sequenceNumber'] as int? ?? 0).fold<int>(0, (a, b) => a > b ? a : b);
+      final lastSeq = (details['lastMessageSeq'] as num?)?.toInt() ?? 0;
+      final afterSeq = lastSeq > 80 ? lastSeq - 80 : 0;
       final page = await _api.get<Map<String, dynamic>>(
         '/api/v1/conversations/$conversationId/messages',
-        query: {'afterSeq': afterSeq > 0 ? afterSeq : 0, 'limit': 80},
+        query: {'afterSeq': afterSeq, 'limit': 80},
       );
-      var messages = _live(_merge(cached, ((page['data'] as List?) ?? []).cast<Map>().map(Map<String, dynamic>.from)));
+      final pending = cached.where((row) => row['pending'] == true);
+      final latestWindow = cached.where((row) {
+        final seq = (row['sequenceNumber'] as num?)?.toInt() ?? 0;
+        return seq >= afterSeq || row['pending'] == true;
+      });
+      var messages = _live(
+        _merge(
+          [...state.messages, ...latestWindow, ...pending],
+          ((page['data'] as List?) ?? []).cast<Map>().map(Map<String, dynamic>.from),
+        ),
+      );
       final lastChange = cached
           .map((row) => row['changeSeq'] as int? ?? 0)
           .fold<int>(0, (a, b) => a > b ? a : b);
@@ -124,16 +153,16 @@ class MessagesController extends StateNotifier<MessagesState> {
           ? receipts.cast<Map>().map(Map<String, dynamic>.from).toList()
           : ((receipts as Map?)?['data'] as List? ?? []).cast<Map>().map(Map<String, dynamic>.from).toList();
       await _ref.read(databaseProvider).replaceConversation(conversationId, messages);
-      final withDrafts = _live(await _ref.read(databaseProvider).loadMessages(conversationId));
       state = state.copyWith(
         details: details,
         retention: retention,
-        messages: _sort(withDrafts),
+        messages: _sort(messages),
         receipts: receiptRows,
         loading: false,
+        hasOlder: _minSeq(messages) > 1,
       );
       _markRead();
-      unawaited(_resumePending(withDrafts));
+      unawaited(_resumePending(messages));
     } catch (_) {
       state = state.copyWith(loading: false);
     }
@@ -184,23 +213,61 @@ class MessagesController extends StateNotifier<MessagesState> {
   }
 
   Future<void> remove(String id) async {
-    await _api.delete('/api/v1/messages/$id');
+    final updated = await _api.delete<Map<String, dynamic>>('/api/v1/messages/$id');
+    _upsert(updated);
+    await _ref.read(databaseProvider).upsertMessage(updated);
   }
 
   Future<void> hide(String id) async {
     await _api.post('/api/v1/messages/$id/hide');
-    state = state.copyWith(messages: state.messages.where((row) => row['id'] != id).toList());
+    _drop(id);
+  }
+
+  Future<void> hideMany(Iterable<String> ids) async {
+    await _eachId(ids, hide);
+  }
+
+  Future<void> removeMany(Iterable<String> ids) async {
+    await _eachId(ids, remove);
   }
 
   Future<void> react(String id, String emoji) async {
     await _api.post('/api/v1/messages/$id/reactions', data: {'emoji': emoji});
   }
 
-  Future<void> forward(String id, String targetId) async {
-    await _api.post('/api/v1/messages/$id/forward', data: {
+  Future<void> forward(Map<String, dynamic> message, String targetId) async {
+    if (!canForwardMessage(message)) {
+      throw const ApiError(message: 'This message cannot be forwarded.', code: 'INVALID_REFERENCE');
+    }
+    await _api.post('/api/v1/messages/${message['id']}/forward', data: {
       'conversationId': targetId,
       'clientMessageId': const Uuid().v4(),
+      'content': forwardContent(message),
     });
+  }
+
+  Future<void> forwardMany(List<Map<String, dynamic>> messages, String targetId) async {
+    Object? lastError;
+    for (final message in messages.where(canForwardMessage)) {
+      try {
+        await forward(message, targetId);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (lastError != null) throw lastError;
+  }
+
+  Future<void> _eachId(Iterable<String> ids, Future<void> Function(String id) action) async {
+    Object? lastError;
+    for (final id in ids) {
+      try {
+        await action(id);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (lastError != null) throw lastError;
   }
 
   CancelToken? _uploadCancel;
@@ -399,6 +466,33 @@ class MessagesController extends StateNotifier<MessagesState> {
     }
   }
 
+  Future<void> loadOlder() async {
+    if (state.loadingOlder || !state.hasOlder) return;
+    final minSeq = _minSeq(state.messages);
+    if (minSeq <= 1) {
+      state = state.copyWith(hasOlder: false);
+      return;
+    }
+    state = state.copyWith(loadingOlder: true);
+    try {
+      final afterSeq = minSeq > 81 ? minSeq - 81 : 0;
+      final page = await _api.get<Map<String, dynamic>>(
+        '/api/v1/conversations/$conversationId/messages',
+        query: {'afterSeq': afterSeq, 'limit': 80},
+      );
+      final incoming = ((page['data'] as List?) ?? []).cast<Map>().map(Map<String, dynamic>.from);
+      final merged = _live(_merge(state.messages, incoming));
+      state = state.copyWith(
+        messages: _sort(merged),
+        loadingOlder: false,
+        hasOlder: _minSeq(merged) > 1,
+      );
+      await _ref.read(databaseProvider).replaceConversation(conversationId, merged);
+    } catch (_) {
+      state = state.copyWith(loadingOlder: false);
+    }
+  }
+
   void setReply(Map<String, dynamic>? message) => state = state.copyWith(replyTo: message, clearReply: message == null);
   void setEditing(Map<String, dynamic>? message) =>
       state = state.copyWith(editing: message, clearEditing: message == null);
@@ -492,6 +586,11 @@ class MessagesController extends StateNotifier<MessagesState> {
     });
   }
 
+  void _drop(String id) {
+    state = state.copyWith(messages: state.messages.where((row) => row['id'] != id).toList());
+    _ref.read(databaseProvider).deleteMessage(id);
+  }
+
   void _upsert(Map<String, dynamic> incoming) {
     final next = [...state.messages];
     final index = next.indexWhere((row) {
@@ -507,7 +606,19 @@ class MessagesController extends StateNotifier<MessagesState> {
   }
 
   List<Map<String, dynamic>> _live(Iterable<Map<String, dynamic>> rows) {
-    return rows.where((row) => row['expiredAt'] == null).toList();
+    return rows.where((row) => !cachedPayloadExpired(row)).toList();
+  }
+
+  int _minSeq(List<Map<String, dynamic>> rows) {
+    var min = 1 << 30;
+    var found = false;
+    for (final row in rows) {
+      final seq = (row['sequenceNumber'] as num?)?.toInt() ?? 0;
+      if (seq <= 0) continue;
+      found = true;
+      if (seq < min) min = seq;
+    }
+    return found ? min : 0;
   }
 
   List<Map<String, dynamic>> _sort(List<Map<String, dynamic>> rows) {
@@ -538,6 +649,7 @@ class MessagesController extends StateNotifier<MessagesState> {
 
   @override
   void dispose() {
+    _userSub?.close();
     _sub?.cancel();
     super.dispose();
   }

@@ -139,16 +139,24 @@ export function messagesService(app) {
     async get(id, userId) {
       const message = await messageFor(id);
       if (!message) throw new AppError('Message not found', 404, 'NOT_FOUND');
-      await conversationsService.assertMember(message.conversationId, userId);
+      const { member } = await conversationsService.assertMember(message.conversationId, userId);
       const [hidden] = await db
         .select({ messageId: messageHides.messageId })
         .from(messageHides)
         .where(and(eq(messageHides.messageId, id), eq(messageHides.userId, userId)));
-      if (hidden || message.expiredAt) throw new AppError('Message not found', 404, 'NOT_FOUND');
+      if (
+        hidden ||
+        message.expiredAt ||
+        (member.hiddenUntilSeq != null && message.sequenceNumber <= member.hiddenUntilSeq)
+      ) {
+        throw new AppError('Message not found', 404, 'NOT_FOUND');
+      }
       return this.present(message, userId);
     },
     async list(conversationId, userId, afterSeq, limit) {
-      await conversationsService.assertMember(conversationId, userId);
+      const { member } = await conversationsService.assertMember(conversationId, userId);
+      const hiddenFloor =
+        member.hiddenUntilSeq == null ? undefined : gt(messages.sequenceNumber, member.hiddenUntilSeq);
       const rows = await db
         .select()
         .from(messages)
@@ -156,6 +164,7 @@ export function messagesService(app) {
           and(
             eq(messages.conversationId, conversationId),
             Number.isInteger(afterSeq) ? gt(messages.sequenceNumber, afterSeq) : undefined,
+            hiddenFloor,
             isNull(messages.expiredAt),
             notHiddenBy(userId),
           ),
@@ -168,7 +177,9 @@ export function messagesService(app) {
       };
     },
     async sync(conversationId, userId, afterChangeSeq, limit) {
-      const { conversation } = await conversationsService.assertMember(conversationId, userId);
+      const { conversation, member } = await conversationsService.assertMember(conversationId, userId);
+      const hiddenFloor =
+        member.hiddenUntilSeq == null ? undefined : gt(messages.sequenceNumber, member.hiddenUntilSeq);
       const rows = await db
         .select()
         .from(messages)
@@ -176,6 +187,7 @@ export function messagesService(app) {
           and(
             eq(messages.conversationId, conversationId),
             Number.isInteger(afterChangeSeq) ? gt(messages.changeSeq, afterChangeSeq) : undefined,
+            hiddenFloor,
             notHiddenBy(userId),
           ),
         )

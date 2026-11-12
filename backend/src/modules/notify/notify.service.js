@@ -50,6 +50,26 @@ export function notifyService(app) {
       return this.getPreferences(userId);
     },
 
+    async muteMany(userId, ids, { muted, until } = {}) {
+      const unique = [...new Set((ids ?? []).filter((id) => typeof id === 'string' && id.length > 0))];
+      if (!unique.length) throw new AppError('Select at least one chat', 400, 'EMPTY_SELECTION');
+      if (unique.length > 50) throw new AppError('Too many chats selected', 400, 'TOO_MANY');
+      const updated = [];
+      const failed = [];
+      for (const id of unique) {
+        try {
+          updated.push(await this.mute(id, userId, { muted, until }));
+        } catch (error) {
+          failed.push({
+            id,
+            code: error.code || 'FAILED',
+            message: error.message || 'Unable to update mute',
+          });
+        }
+      }
+      return { muted: updated, failed };
+    },
+
     async mute(conversationId, userId, { muted, until } = {}) {
       await conversations.assertMember(conversationId, userId);
       let mutedUntil = null;

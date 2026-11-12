@@ -15,7 +15,10 @@ export const conversationMembers = pgTable(
     joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
     leftAt: timestamp('left_at', { withTimezone: true }),
     lastReadSeq: bigint('last_read_seq', { mode: 'number' }).notNull().default(0),
+    hiddenUntilSeq: bigint('hidden_until_seq', { mode: 'number' }),
     mutedUntil: timestamp('muted_until', { withTimezone: true }),
+    pinnedAt: timestamp('pinned_at', { withTimezone: true }),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
   },
   (t) => [
     primaryKey({ columns: [t.conversationId, t.userId] }),

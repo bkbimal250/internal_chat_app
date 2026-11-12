@@ -128,7 +128,7 @@ void main() {
     await controller.loadCapabilities();
     expect(controller.state.capabilities.enabled, isTrue);
     await controller.startCall(userId: 'callee', name: 'Callee');
-    expect(controller.state.active?.phase, CallPhase.ringing);
+    expect(controller.state.active?.phase, CallPhase.initiating);
     expect(controller.state.active?.outgoing, isTrue);
     await controller.toggleMute();
     await controller.toggleSpeaker();
@@ -273,11 +273,17 @@ void main() {
     socket.connect();
     await controller.loadCapabilities();
     await controller.startCall(userId: 'callee', name: 'Callee');
-    expect(controller.state.active?.phase, CallPhase.ringing);
+    expect(controller.state.active?.phase, CallPhase.initiating);
     expect(
       sent.where((row) => jsonDecode(row as String)['event'] == 'call.offer'),
       isEmpty,
     );
+    incoming.add(jsonEncode({
+      'event': 'call.ringing',
+      'data': {'callId': '11111111-1111-4111-8111-111111111111'},
+    }));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(controller.state.active?.phase, CallPhase.ringing);
     incoming.add(jsonEncode({
       'event': 'call.accept',
       'data': {'callId': '11111111-1111-4111-8111-111111111111'},
@@ -358,7 +364,7 @@ void main() {
       'data': {'callId': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'},
     }));
     await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(controller.state.active?.phase, CallPhase.ringing);
+    expect(controller.state.active?.phase, CallPhase.initiating);
     incoming.add(jsonEncode({
       'event': 'call.end',
       'data': {'callId': '22222222-2222-4222-8222-222222222222'},
@@ -442,8 +448,10 @@ void main() {
     expect(controller.state.active?.phase, CallPhase.ended);
   });
 
-  test('failed ICE marks the call failed instead of staying on Connecting', () async {
+  test('failed ICE keeps a connecting call live as Reconnecting', () async {
     final peer = FakePeer();
+    final incoming = StreamController<dynamic>.broadcast();
+    addTearDown(incoming.close);
     final dio = _dio((options) {
       if (options.path.endsWith('/capabilities')) return {'enabled': true};
       if (options.path.endsWith('/ice-config')) {
@@ -464,6 +472,15 @@ void main() {
       return {};
     });
     late CallController controller;
+    final store = SessionStore.memory()..applyTokens(access: 'token');
+    final socket = ChatSocket(
+      store,
+      openChannel: ({required uri, required token}) => ChatSocketConnection(
+        stream: incoming.stream,
+        add: (_) {},
+        close: ([code, reason]) async {},
+      ),
+    );
     final provider = StateNotifierProvider<CallController, CallState>((ref) {
       controller = CallController(
         ref,
@@ -474,25 +491,150 @@ void main() {
     });
     final container = ProviderContainer(
       overrides: [
-        apiClientProvider.overrideWithValue(ApiClient(SessionStore.memory(), client: dio)),
-        chatSocketProvider.overrideWithValue(
-          ChatSocket(
-            SessionStore.memory(),
-            openChannel: ({required uri, required token}) => ChatSocketConnection(
-              stream: const Stream.empty(),
-              add: (_) {},
-              close: ([code, reason]) async {},
-            ),
-          ),
-        ),
+        sessionStoreProvider.overrideWithValue(store),
+        apiClientProvider.overrideWithValue(ApiClient(store, client: dio)),
+        chatSocketProvider.overrideWithValue(socket),
       ],
     );
     addTearDown(container.dispose);
     container.read(provider);
+    socket.connect();
     await controller.loadCapabilities();
     await controller.startCall(userId: 'callee', name: 'Callee');
+    incoming.add(jsonEncode({
+      'event': 'call.accept',
+      'data': {'callId': '44444444-4444-4444-8444-444444444444'},
+    }));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(controller.state.active?.phase, CallPhase.connecting);
     peer.states.add('RTCIceConnectionStateFailed');
     await Future<void>.delayed(const Duration(milliseconds: 30));
-    expect(controller.state.active?.phase, CallPhase.failed);
+    expect(controller.state.active?.phase, CallPhase.reconnecting);
+    expect(controller.state.active?.isLive, isTrue);
+    expect(controller.state.active?.phase, isNot(CallPhase.ended));
+    expect(controller.state.active?.phase, isNot(CallPhase.failed));
+  });
+
+  test('accept echo does not end the local incoming call', () async {
+    final peer = FakePeer();
+    final incoming = StreamController<dynamic>.broadcast();
+    addTearDown(incoming.close);
+    final dio = _dio((options) {
+      if (options.path.endsWith('/capabilities')) return {'enabled': true};
+      if (options.path.endsWith('/ice-config')) {
+        return {'iceServers': [{'urls': ['stun:stun.test:3478']}]};
+      }
+      if (options.path.contains('/accept')) return {'status': 'connecting'};
+      return {};
+    });
+    late CallController controller;
+    final store = SessionStore.memory()..applyTokens(access: 'token');
+    final socket = ChatSocket(
+      store,
+      openChannel: ({required uri, required token}) => ChatSocketConnection(
+        stream: incoming.stream,
+        add: (_) {},
+        close: ([code, reason]) async {},
+      ),
+    );
+    final provider = StateNotifierProvider<CallController, CallState>((ref) {
+      controller = CallController(
+        ref,
+        peerFactory: (_) async => peer,
+        requestMicrophone: () async => true,
+      );
+      return controller;
+    });
+    final container = ProviderContainer(
+      overrides: [
+        sessionStoreProvider.overrideWithValue(store),
+        apiClientProvider.overrideWithValue(ApiClient(store, client: dio)),
+        chatSocketProvider.overrideWithValue(socket),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.read(provider);
+    socket.connect();
+    await controller.loadCapabilities();
+    incoming.add(jsonEncode({
+      'event': 'call.invite',
+      'data': {
+        'callId': '55555555-5555-4555-8555-555555555555',
+        'callerId': 'caller',
+        'calleeId': 'me',
+        'createdAt': DateTime.now().toIso8601String(),
+        'caller': {'id': 'caller', 'displayName': 'Caller'},
+      },
+    }));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    final pending = controller.accept('55555555-5555-4555-8555-555555555555');
+    incoming.add(jsonEncode({
+      'event': 'call.accept',
+      'data': {
+        'callId': '55555555-5555-4555-8555-555555555555',
+        'acceptedSessionId': 'other-or-self',
+      },
+    }));
+    await pending;
+    expect(controller.state.active?.phase, isNot(CallPhase.ended));
+    expect(controller.state.active?.isLive, isTrue);
+  });
+
+  test('accept on another device ends a still-ringing incoming call', () async {
+    final incoming = StreamController<dynamic>.broadcast();
+    addTearDown(incoming.close);
+    final dio = _dio((options) {
+      if (options.path.endsWith('/capabilities')) return {'enabled': true};
+      return {};
+    });
+    late CallController controller;
+    final store = SessionStore.memory()..applyTokens(access: 'token');
+    final socket = ChatSocket(
+      store,
+      openChannel: ({required uri, required token}) => ChatSocketConnection(
+        stream: incoming.stream,
+        add: (_) {},
+        close: ([code, reason]) async {},
+      ),
+    );
+    final provider = StateNotifierProvider<CallController, CallState>((ref) {
+      controller = CallController(
+        ref,
+        peerFactory: (_) async => FakePeer(),
+        requestMicrophone: () async => true,
+      );
+      return controller;
+    });
+    final container = ProviderContainer(
+      overrides: [
+        sessionStoreProvider.overrideWithValue(store),
+        apiClientProvider.overrideWithValue(ApiClient(store, client: dio)),
+        chatSocketProvider.overrideWithValue(socket),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.read(provider);
+    socket.connect();
+    await controller.loadCapabilities();
+    incoming.add(jsonEncode({
+      'event': 'call.invite',
+      'data': {
+        'callId': '66666666-6666-4666-8666-666666666666',
+        'callerId': 'caller',
+        'calleeId': 'me',
+        'createdAt': DateTime.now().toIso8601String(),
+        'caller': {'id': 'caller', 'displayName': 'Caller'},
+      },
+    }));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    incoming.add(jsonEncode({
+      'event': 'call.accept',
+      'data': {
+        'callId': '66666666-6666-4666-8666-666666666666',
+        'acceptedSessionId': 'other-device',
+      },
+    }));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(controller.state.active?.phase, CallPhase.ended);
   });
 }

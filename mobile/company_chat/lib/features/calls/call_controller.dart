@@ -6,7 +6,9 @@ import 'package:company_chat/core/notifications/pending_call.dart';
 import 'package:company_chat/features/calls/call_models.dart';
 import 'package:company_chat/features/calls/call_signaling.dart';
 import 'package:company_chat/features/calls/voice_peer.dart';
+import 'package:company_chat/features/calls/webrtc_voice_peer.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -119,12 +121,12 @@ class CallController extends StateNotifier<CallState> {
           peerId: record.peerId ?? userId,
           peerName: record.peerName ?? name,
           outgoing: true,
-          phase: CallPhase.ringing,
+          phase: CallPhase.initiating,
           hasPhoto: record.hasPhoto,
           photoVersion: record.photoVersion,
         ),
       );
-      _trace('outgoing start', {'callId': record.id});
+      _trace('outgoing start', {'callId': record.id, 'phase': 'calling'});
       await _preparePeer(asOfferer: true, generation: generation);
     } catch (error) {
       if (!_isCurrent(generation)) return;
@@ -141,21 +143,34 @@ class CallController extends StateNotifier<CallState> {
 
   Future<void> accept(String callId) async {
     final current = state.active;
-    if (current == null || current.id != callId) return;
+    if (current == null || current.id != callId || current.outgoing) return;
+    if (current.phase != CallPhase.ringing && current.phase != CallPhase.connecting) return;
     final generation = _generation;
+    _signalingOpen = true;
+    state = state.copyWith(active: current.copyWith(phase: CallPhase.connecting, clearError: true));
+    _trace('accept local', {'callId': callId});
     try {
       await _ensureMic();
       if (!_isCurrent(generation, callId)) return;
       await _ref.read(apiClientProvider).post('/api/v1/calls/$callId/accept');
       if (!_isCurrent(generation, callId)) return;
-      _signalingOpen = true;
-      state = state.copyWith(active: current.copyWith(phase: CallPhase.connecting));
-      _trace('accept', {'callId': callId});
+      _trace('accept acknowledged', {'callId': callId});
       await _preparePeer(asOfferer: false, generation: generation);
       pendingCallRoute.clearIf(callId);
     } catch (error) {
       if (!_isCurrent(generation, callId)) return;
-      state = state.copyWith(active: current.copyWith(phase: CallPhase.failed, error: error.toString()));
+      if (error is ApiError && error.code == 'CALL_OWNED_BY_OTHER_DEVICE') {
+        await _finish(CallPhase.ended, callId: callId, reason: 'answered-elsewhere');
+        return;
+      }
+      if (error is ApiError && error.code == 'MIC_DENIED') {
+        try {
+          await _ref.read(apiClientProvider).post('/api/v1/calls/$callId/end');
+        } catch (_) {}
+      }
+      state = state.copyWith(
+        active: state.active?.copyWith(phase: CallPhase.failed, error: error.toString()),
+      );
     }
   }
 
@@ -187,6 +202,12 @@ class CallController extends StateNotifier<CallState> {
     final next = !current.muted;
     await _peer?.setMuted(next);
     state = state.copyWith(active: current.copyWith(muted: next));
+  }
+
+  Widget remoteMediaView() {
+    final peer = _peer;
+    if (peer is FlutterVoicePeer) return peer.remoteView;
+    return const SizedBox.shrink();
   }
 
   Future<void> toggleSpeaker() async {
@@ -332,16 +353,11 @@ class CallController extends StateNotifier<CallState> {
       return;
     }
     if (isPeerFailedState(value) && current.isLive) {
-      unawaited(_failIce(current.id));
+      _trace('ice failed kept live', {'callId': current.id, 'phase': current.phase.name});
+      if (current.phase == CallPhase.connected || current.phase == CallPhase.connecting) {
+        state = state.copyWith(active: current.copyWith(phase: CallPhase.reconnecting));
+      }
     }
-  }
-
-  Future<void> _failIce(String callId) async {
-    _trace('ice failed', {'callId': callId, 'host': _iceHost, 'srflx': _iceSrflx, 'relay': _iceRelay});
-    try {
-      await _ref.read(apiClientProvider).post('/api/v1/calls/$callId/end');
-    } catch (_) {}
-    await _finish(CallPhase.failed, callId: callId, reason: 'ice-failed');
   }
 
   Future<void> _cleanupPeer() async {
@@ -512,14 +528,25 @@ class CallController extends StateNotifier<CallState> {
       }
       return;
     }
-    if (name == 'call.accept') {
-      if (!current.outgoing && data['acceptedSessionId'] != null && current.phase == CallPhase.ringing) {
-        unawaited(_finish(CallPhase.ended, reason: 'answered-elsewhere'));
-      } else if (current.outgoing) {
-        _signalingOpen = true;
-        state = state.copyWith(active: current.copyWith(phase: CallPhase.connecting));
-        _flushLocalOffer();
+    if (name == 'call.ringing') {
+      if (current.outgoing && (current.phase == CallPhase.initiating || current.phase == CallPhase.ringing)) {
+        state = state.copyWith(active: current.copyWith(phase: CallPhase.ringing));
+        _trace('callee ringing ack', {'callId': callId});
       }
+      return;
+    }
+    if (name == 'call.accept') {
+      if (!current.outgoing) {
+        if (current.phase == CallPhase.ringing) {
+          unawaited(_finish(CallPhase.ended, callId: callId, reason: 'answered-elsewhere'));
+        } else {
+          _trace('own accept echo ignored', {'callId': callId, 'phase': current.phase.name});
+        }
+        return;
+      }
+      _signalingOpen = true;
+      state = state.copyWith(active: current.copyWith(phase: CallPhase.connecting));
+      _flushLocalOffer();
       return;
     }
     if (name == 'call.reject') {

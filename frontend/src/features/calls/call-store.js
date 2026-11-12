@@ -98,7 +98,12 @@ export function createCallStore({
           set({ active: activeFromRecord(created, { phase: 'ringing' }) })
           return
         }
-        set({ active: activeFromRecord({ ...created, direction: 'outgoing', peer: created.peer || { id: userId, displayName: name, hasProfilePhoto: hasPhoto, photoVersion } }) })
+        set({
+          active: activeFromRecord(
+            { ...created, direction: 'outgoing', peer: created.peer || { id: userId, displayName: name, hasProfilePhoto: hasPhoto, photoVersion } },
+            { phase: 'initiating' },
+          ),
+        })
         await get()._preparePeer(true)
       } catch (error) {
         await get()._cleanupPeer()
@@ -115,14 +120,19 @@ export function createCallStore({
 
     async accept(callId) {
       const current = get().active
-      if (!current || current.id !== callId) return
+      if (!current || current.id !== callId || current.outgoing) return
+      set({ active: { ...current, phase: 'connecting' } })
       try {
         await get()._ensureMic()
         await api.accept(callId)
-        set({ active: { ...current, phase: 'connecting' } })
         await get()._preparePeer(false)
       } catch (error) {
-        set({ active: { ...current, phase: 'failed', error: error.message } })
+        if (error?.code === 'CALL_OWNED_BY_OTHER_DEVICE') {
+          get()._finish('ended')
+          return
+        }
+        const active = get().active
+        set({ active: { ...active, phase: 'failed', error: error.message } })
       }
     },
 
@@ -193,14 +203,21 @@ export function createCallStore({
         else pendingIce.push(data.candidate)
         return
       }
+      if (name === 'call.ringing') {
+        const current = get().active
+        if (current?.outgoing && current.id === data.callId && (current.phase === 'initiating' || current.phase === 'ringing')) {
+          set({ active: { ...current, phase: 'ringing' } })
+        }
+        return
+      }
       if (name === 'call.accept') {
         const current = get().active
         if (!current || current.id !== data.callId) return
-        if (!current.outgoing && data.acceptedSessionId && current.phase === 'ringing') {
-          get()._finish('ended')
-        } else if (current.outgoing) {
-          set({ active: { ...current, phase: 'connecting' } })
+        if (!current.outgoing) {
+          if (current.phase === 'ringing') get()._finish('ended')
+          return
         }
+        set({ active: { ...current, phase: 'connecting' } })
         return
       }
       if (['call.end', 'call.reject', 'call.cancel', 'call.busy', 'call.timeout'].includes(name)) {

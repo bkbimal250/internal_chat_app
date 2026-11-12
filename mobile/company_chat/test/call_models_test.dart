@@ -10,6 +10,14 @@ void main() {
     expect(callPhaseFromStatus('cancelled', outgoing: true), CallPhase.ended);
   });
 
+  test('outgoing labels stay Calling until a device acknowledges ringing', () {
+    expect(callStatusLabel(CallPhase.initiating, outgoing: true), 'Calling…');
+    expect(callStatusLabel(CallPhase.ringing, outgoing: true), 'Ringing…');
+    expect(callStatusLabel(CallPhase.ringing, outgoing: false), 'Incoming voice call');
+    expect(callStatusLabel(CallPhase.connecting, outgoing: true), 'Connecting…');
+    expect(callStatusLabel(CallPhase.failed, outgoing: false), 'Call failed');
+  });
+
   test('live call payloads do not include stored duration or history fields', () {
     final record = CallRecord.fromJson({
       'id': '1',

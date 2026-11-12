@@ -18,6 +18,7 @@ import {
 } from '../modules/calls/calls.state.js';
 
 test('call state machine accepts valid transitions and rejects invalid ones', () => {
+  assert.equal(nextCallStatus('initiating', 'ring').status, 'ringing');
   assert.equal(nextCallStatus('ringing', 'accept').status, 'connecting');
   assert.equal(nextCallStatus('connecting', 'connected').status, 'connected');
   assert.equal(nextCallStatus('connected', 'end').status, 'ended');

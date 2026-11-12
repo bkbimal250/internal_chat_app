@@ -73,14 +73,16 @@ describe('web call store', () => {
   })
 
   it('places an outgoing call, signals an offer, and toggles mute/speaker', async () => {
-    const { store, peer, sent, api } = setup()
+    const { store, peer, sent, api, socket } = setup()
     await store.getState().loadCapabilities()
     expect(store.getState().capabilities.enabled).toBe(true)
     expect(store.getState().capabilities.recorded).toBe(false)
     expect(store.getState().capabilities.persisted).toBe(false)
     await store.getState().startCall({ userId: 'callee', name: 'Callee' })
-    expect(store.getState().active.phase).toBe('ringing')
+    expect(store.getState().active.phase).toBe('initiating')
     expect(store.getState().active.outgoing).toBe(true)
+    socket.listener({ event: 'call.ringing', data: { callId: '11111111-1111-4111-8111-111111111111' } })
+    expect(store.getState().active.phase).toBe('ringing')
     expect(sent.some((item) => item.event === 'call.offer' && item.data.sdp === 'offer-sdp')).toBe(true)
     await store.getState().toggleMute()
     await store.getState().toggleSpeaker()

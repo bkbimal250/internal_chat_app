@@ -19,6 +19,8 @@ class ApiError implements Exception {
     return status == 403 && code != null && codes.contains(code);
   }
 
+  bool get isNetworkError => status == null || status == 0 || (status != null && status! >= 500);
+
   @override
   String toString() => message;
 }

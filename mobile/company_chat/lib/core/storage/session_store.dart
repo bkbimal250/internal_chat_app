@@ -16,6 +16,7 @@ class SessionStore {
 
   static const _refreshKey = 'company_chat.refresh_token';
   static const _deviceKey = 'company_chat.device_id';
+  static const _userKey = 'company_chat.user_id';
 
   final FlutterSecureStorage? _storage;
   final Map<String, String>? _memory;
@@ -73,6 +74,16 @@ class SessionStore {
     await _write(_refreshKey, token);
   }
 
+  Future<String?> readUserId() => _read(_userKey);
+
+  Future<void> writeUserId(String? id) async {
+    if (id == null || id.isEmpty) {
+      await _delete(_userKey);
+      return;
+    }
+    await _write(_userKey, id);
+  }
+
   void applyTokens({
     required String access,
     String? csrf,
@@ -90,6 +101,7 @@ class SessionStore {
     csrfToken = null;
     sessionId = null;
     await _delete(_refreshKey);
+    await _delete(_userKey);
     if (!keepDevice) await _delete(_deviceKey);
   }
 }

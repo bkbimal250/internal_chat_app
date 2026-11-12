@@ -92,6 +92,20 @@
       "when": 1793700000000,
       "tag": "0012_attachment_batches",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793810000000,
+      "tag": "0013_conversation_hidden_seq",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793820000000,
+      "tag": "0014_conversation_pin_archive",
+      "breakpoints": true
     }
   ]
 }

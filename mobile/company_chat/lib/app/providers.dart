@@ -1,5 +1,6 @@
 import 'package:company_chat/core/network/api_client.dart';
 import 'package:company_chat/core/storage/app_database.dart';
+import 'package:company_chat/core/storage/conversation_list_store.dart';
 import 'package:company_chat/core/storage/session_store.dart';
 import 'package:company_chat/core/websocket/chat_socket.dart';
 import 'package:flutter/widgets.dart';
@@ -11,8 +12,15 @@ final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient(ref.watch(sessionStoreProvider));
 });
 
+final currentUserIdProvider = StateProvider<String?>((ref) => null);
+
+final conversationListStoreProvider = Provider<ConversationListStore>((ref) {
+  return ConversationListStore();
+});
+
 final databaseProvider = Provider<AppDatabase>((ref) {
-  final db = AppDatabase();
+  final userId = ref.watch(currentUserIdProvider);
+  final db = AppDatabase(name: AppDatabase.nameFor(userId));
   ref.onDispose(db.close);
   return db;
 });
@@ -33,3 +41,7 @@ final typingProvider = StateProvider<Map<String, Set<String>>>((ref) => {});
 final viewedConversationProvider = StateProvider<String?>((ref) => null);
 
 final appLifecycleProvider = StateProvider<AppLifecycleState>((ref) => AppLifecycleState.resumed);
+
+final conversationCacheClearerProvider = Provider<Future<void> Function(String)>((ref) {
+  return (id) => ref.read(databaseProvider).clearConversation(id);
+});

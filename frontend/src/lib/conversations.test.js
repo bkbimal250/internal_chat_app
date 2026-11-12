@@ -65,6 +65,12 @@ describe('conversation helpers', () => {
     expect(filterConversations([older, newer], { currentUserId: 'me' }).map((row) => row.id)).toEqual(['g1', 'd1'])
   })
 
+  it('keeps pinned chats above newer unpinned chats', () => {
+    const pinned = { ...direct, pinnedAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-10-01T10:00:00.000Z', latestMessage: { content: 'old', createdAt: '2026-10-01T10:00:00.000Z' } }
+    const recent = { ...group, updatedAt: '2026-10-01T12:00:00.000Z', latestMessage: { content: 'new', createdAt: '2026-10-01T12:00:00.000Z' } }
+    expect(sortConversationsByActivity([recent, pinned]).map((row) => row.id)).toEqual(['d1', 'g1'])
+  })
+
   it('moves a conversation to the top when a message is sent or received', () => {
     const rows = [
       { id: 'c1', unreadCount: 0, lastMessageSeq: 1, latestMessage: { id: 'm1', content: 'old', createdAt: '2026-10-01T10:00:00.000Z' } },
@@ -106,5 +112,15 @@ describe('conversation helpers', () => {
       viewedConversationId: 'c1',
     })
     expect(viewing[0].unreadCount).toBe(0)
+  })
+
+  it('does not insert a missing conversation when insertIfMissing is false', () => {
+    const rows = [{ id: 'c1', unreadCount: 0 }]
+    const next = applyConversationMessage(rows, 'archived', { id: 'm1', sequenceNumber: 2, senderId: 'you' }, {
+      event: 'message.created',
+      currentUserId: 'me',
+      insertIfMissing: false,
+    })
+    expect(next.map((row) => row.id)).toEqual(['c1'])
   })
 })

@@ -74,13 +74,25 @@ function applyUserUpdated(data) {
   }
 }
 
-export function patchConversationList(updater) {
-  queryClient.setQueryData(queryKeys.conversations, (current) => {
+function patchList(key, updater) {
+  queryClient.setQueryData(key, (current) => {
     if (!current?.data) return current
     const data = updater(current.data)
     if (data === current.data) return current
     return { ...current, data }
   })
+}
+
+export function patchConversationList(updater) {
+  patchList(queryKeys.conversations, updater)
+}
+
+export function patchArchivedConversationList(updater) {
+  patchList(queryKeys.archivedConversations, updater)
+}
+
+function listHasConversation(key, conversationId) {
+  return queryClient.getQueryData?.(key)?.data?.some((row) => row.id === conversationId) === true
 }
 
 function patchGroupsList(conversationId, message, options) {
@@ -165,13 +177,19 @@ export function applyRealtimeEvent(
       return { ...current, data: upsertMessage(list, data) }
     })
     const options = { event: event.event, currentUserId, viewedConversationId }
-    let missing = false
-    patchConversationList((rows) => {
-      missing = event.event === 'message.created' && !rows.some((row) => row.id === conversationId)
-      return applyConversationMessage(rows, conversationId, data, options)
-    })
+    if (listHasConversation(queryKeys.archivedConversations, conversationId)) {
+      patchArchivedConversationList((rows) =>
+        applyConversationMessage(rows, conversationId, data, { ...options, insertIfMissing: false }),
+      )
+    } else {
+      let missing = false
+      patchConversationList((rows) => {
+        missing = event.event === 'message.created' && !rows.some((row) => row.id === conversationId)
+        return applyConversationMessage(rows, conversationId, data, options)
+      })
+      if (missing) queryClient.invalidateQueries({ queryKey: queryKeys.conversations })
+    }
     patchGroupsList(conversationId, data, options)
-    if (missing) queryClient.invalidateQueries({ queryKey: queryKeys.conversations })
     return
   }
 

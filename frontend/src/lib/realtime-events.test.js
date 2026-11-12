@@ -13,6 +13,7 @@ vi.mock('@/lib/query-client', () => {
         store.set(id, next)
         return next
       },
+      getQueryData: (key) => store.get(JSON.stringify(key)),
       getQueriesData: ({ queryKey }) =>
         [...store.entries()]
           .filter(([id]) => matches(JSON.parse(id), queryKey))
@@ -257,5 +258,30 @@ describe('websocket event handling', () => {
     expect(onPresence).toHaveBeenCalledWith('u2', true)
     expect(onTyping).toHaveBeenCalledWith('c1', 'u2', true)
     expect(onRevoked).toHaveBeenCalled()
+  })
+
+  it('updates archived chats in place and does not restore them to the inbox', () => {
+    queryClient.setQueryData(queryKeys.conversations, { data: [{ id: 'inbox', unreadCount: 0 }] })
+    queryClient.setQueryData(queryKeys.archivedConversations, {
+      data: [{ id: 'c1', unreadCount: 0, archivedAt: '2026-11-01T00:00:00.000Z', lastMessageSeq: 2 }],
+    })
+    applyRealtimeEvent(
+      {
+        event: 'message.created',
+        data: {
+          id: 'm9',
+          conversationId: 'c1',
+          senderId: 'other',
+          sequenceNumber: 3,
+          content: 'still archived',
+        },
+      },
+      { currentUserId: 'me' },
+    )
+    const inbox = queryClient.store.get(JSON.stringify(queryKeys.conversations))
+    const archived = queryClient.store.get(JSON.stringify(queryKeys.archivedConversations))
+    expect(inbox.data.map((row) => row.id)).toEqual(['inbox'])
+    expect(archived.data[0].latestMessage.content).toBe('still archived')
+    expect(archived.data[0].archivedAt).toBe('2026-11-01T00:00:00.000Z')
   })
 })

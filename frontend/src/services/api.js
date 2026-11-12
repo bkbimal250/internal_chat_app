@@ -25,6 +25,24 @@ export const conversationsApi = {
   direct: (userId) => apiClient.post('/api/v1/conversations/direct', { userId }).then((r) => r.data),
   read: (id, sequenceNumber) =>
     apiClient.post(`/api/v1/conversations/${id}/read`, { sequenceNumber }).then((r) => r.data),
+  readMany: (conversationIds) =>
+    apiClient.post('/api/v1/conversations/read', { conversationIds }).then((r) => r.data),
+  unread: (id) => apiClient.post(`/api/v1/conversations/${id}/unread`).then((r) => r.data),
+  unreadMany: (conversationIds) =>
+    apiClient.post('/api/v1/conversations/unread', { conversationIds }).then((r) => r.data),
+  hide: (id) => apiClient.post(`/api/v1/conversations/${id}/hide`).then((r) => r.data),
+  hideMany: (conversationIds) =>
+    apiClient.post('/api/v1/conversations/hide', { conversationIds }).then((r) => r.data),
+  pin: (id, pinned) => apiClient.post(`/api/v1/conversations/${id}/pin`, { pinned }).then((r) => r.data),
+  pinMany: (conversationIds, pinned) =>
+    apiClient.post('/api/v1/conversations/pin', { conversationIds, pinned }).then((r) => r.data),
+  archive: (id, archived) =>
+    apiClient.post(`/api/v1/conversations/${id}/archive`, { archived }).then((r) => r.data),
+  archiveMany: (conversationIds, archived) =>
+    apiClient.post('/api/v1/conversations/archive', { conversationIds, archived }).then((r) => r.data),
+  mute: (id, muted) => apiClient.post(`/api/v1/conversations/${id}/mute`, { muted }).then((r) => r.data),
+  muteMany: (conversationIds, muted) =>
+    apiClient.post('/api/v1/conversations/mute', { conversationIds, muted }).then((r) => r.data),
 }
 
 export const messagesApi = {

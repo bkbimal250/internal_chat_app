@@ -44,8 +44,27 @@ export function conversationActivityAt(conversation) {
   return Number.isFinite(time) ? time : 0
 }
 
+export function isPinned(conversation) {
+  return Boolean(conversation?.pinnedAt)
+}
+
+export function isArchived(conversation) {
+  return Boolean(conversation?.archivedAt)
+}
+
+export function isMuted(conversation, now = Date.now()) {
+  const until = Date.parse(conversation?.mutedUntil || '')
+  return Number.isFinite(until) && until > now
+}
+
 export function sortConversationsByActivity(conversations) {
   return [...(conversations ?? [])].sort((left, right) => {
+    const pinned = Number(isPinned(right)) - Number(isPinned(left))
+    if (pinned !== 0) return pinned
+    if (isPinned(left) && isPinned(right)) {
+      const pinDelta = Date.parse(right.pinnedAt || '') - Date.parse(left.pinnedAt || '')
+      if (pinDelta !== 0) return pinDelta
+    }
     const delta = conversationActivityAt(right) - conversationActivityAt(left)
     if (delta !== 0) return delta
     return String(right.id ?? '').localeCompare(String(left.id ?? ''))
@@ -62,11 +81,12 @@ export function applyConversationMessage(
   rows,
   conversationId,
   message,
-  { event = 'message.created', currentUserId, viewedConversationId = null } = {},
+  { event = 'message.created', currentUserId, viewedConversationId = null, insertIfMissing = true } = {},
 ) {
   if (!conversationId) return rows ?? []
   const list = Array.isArray(rows) ? rows : []
   const index = list.findIndex((row) => row.id === conversationId)
+  if (index === -1 && !insertIfMissing) return list
   const current = index >= 0 ? list[index] : { id: conversationId, unreadCount: 0 }
   const created = event === 'message.created'
   const duplicate = sameConversationMessage(current.latestMessage, message)

@@ -1,5 +1,6 @@
 export const queryKeys = {
   conversations: ['conversations'],
+  archivedConversations: ['conversations', 'archived'],
   conversation: (id) => ['conversation', id],
   messages: (id) => ['messages', id],
   receipts: (id) => ['receipts', id],

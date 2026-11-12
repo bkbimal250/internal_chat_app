@@ -5,9 +5,10 @@ import { useAuthStore } from '@/stores/auth-store'
 import { useUiStore } from '@/stores/ui-store'
 import { queryClient } from '@/lib/query-client'
 import { queryKeys } from '@/lib/query-keys'
-import { conversationTitle } from '@/lib/conversations'
+import { conversationTitle, isMuted } from '@/lib/conversations'
 import { shouldNotifyIncomingMessage } from '@/lib/notify-incoming'
 import { previewText } from '@/lib/conversations'
+import { findConversation } from '@/lib/conversation-actions'
 
 export function MessageNotifyHost() {
   const seen = useRef(new Set())
@@ -26,8 +27,14 @@ export function MessageNotifyHost() {
         seen: seen.current,
       })
       if (!notify) return
-      const conversations = queryClient.getQueryData(queryKeys.conversations)?.data || []
-      const conversation = conversations.find((row) => row.id === message.conversationId)
+      const conversation = findConversation(
+        [
+          queryClient.getQueryData(queryKeys.conversations)?.data,
+          queryClient.getQueryData(queryKeys.archivedConversations)?.data,
+        ],
+        message.conversationId,
+      )
+      if (isMuted(conversation)) return
       const title = conversationTitle(conversation, currentUserId) || 'MiChat'
       const body = previewText(message) || 'New message'
       toast(title, { description: body, duration: 4000 })

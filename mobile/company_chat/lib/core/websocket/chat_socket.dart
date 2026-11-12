@@ -47,6 +47,8 @@ class ChatSocket {
   bool _wanted = false;
   int _generation = 0;
   bool _reauthing = false;
+  final List<String> _pending = [];
+  static const _pendingLimit = 32;
 
   Stream<Map<String, dynamic>> get events => _events.stream;
 
@@ -74,6 +76,27 @@ class ChatSocket {
 
   void disconnect() {
     _wanted = false;
+    _pending.clear();
+    _tearDownChannel();
+  }
+
+  void reconnect() {
+    _wanted = true;
+    _tearDownChannel();
+    _open();
+  }
+
+  void send(String event, [Map<String, dynamic>? data]) {
+    final payload = jsonEncode({'event': event, 'data': data ?? {}});
+    final channel = _channel;
+    if (channel == null) {
+      if (_wanted && _pending.length < _pendingLimit) _pending.add(payload);
+      return;
+    }
+    channel.add(payload);
+  }
+
+  void _tearDownChannel() {
     _generation++;
     _ping?.cancel();
     _reconnect?.cancel();
@@ -81,15 +104,13 @@ class ChatSocket {
     _channel = null;
   }
 
-  void reconnect() {
-    disconnect();
-    connect();
-  }
-
-  void send(String event, [Map<String, dynamic>? data]) {
+  void _flushPending() {
     final channel = _channel;
-    if (channel == null) return;
-    channel.add(jsonEncode({'event': event, 'data': data ?? {}}));
+    if (channel == null || _pending.isEmpty) return;
+    for (final payload in _pending) {
+      channel.add(payload);
+    }
+    _pending.clear();
   }
 
   void _open() {
@@ -103,6 +124,7 @@ class ChatSocket {
         token: token,
       );
       _channel = channel;
+      _flushPending();
       channel.stream.listen(
         (raw) {
           if (gen != _generation) return;

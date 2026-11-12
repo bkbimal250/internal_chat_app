@@ -7,7 +7,7 @@ import 'package:company_chat/core/widgets/conversation_tile.dart';
 import 'package:company_chat/core/widgets/empty_state.dart';
 import 'package:company_chat/core/widgets/filter_chips.dart';
 import 'package:company_chat/core/widgets/search_field.dart';
-import 'package:company_chat/core/widgets/user_avatar.dart';
+import 'package:company_chat/core/widgets/conversation_avatar.dart';
 import 'package:company_chat/features/auth/presentation/auth_controller.dart';
 import 'package:company_chat/features/calls/call_providers.dart';
 import 'package:company_chat/features/conversations/conversation_actions.dart';
@@ -306,13 +306,10 @@ class _ChatsListState extends ConsumerState<_ChatsList> {
                                                           : AppColors.slate,
                                                 )
                                               : null,
-                                          avatar: UserAvatar(
-                                            person: isGroup ? null : peer,
-                                            name: title,
-                                            userId: isGroup ? id : null,
-                                            hasPhoto: conversation['hasAvatar'] == true,
-                                            photoVersion: conversation['avatarVersion']?.toString(),
-                                            group: isGroup,
+                                          avatar: ConversationAvatar.from(
+                                            conversation: conversation,
+                                            peer: peer,
+                                            title: title,
                                             online: !isGroup && online.contains(peer?['id']),
                                             size: AppSpacing.avatar,
                                           ),
@@ -408,12 +405,10 @@ class _CallsList extends ConsumerWidget {
           title: title,
           preview: 'Tap to start a live voice call',
           time: '',
-          avatar: UserAvatar(
-            person: peer,
-            name: title,
-            userId: peerId,
-            hasPhoto: peer?['hasProfilePhoto'] == true,
-            photoVersion: peer?['photoVersion']?.toString(),
+          avatar: ConversationAvatar.from(
+            conversation: conversation,
+            peer: peer,
+            title: title,
             size: AppSpacing.avatar,
           ),
           trailing: IconButton(

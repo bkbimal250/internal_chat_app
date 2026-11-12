@@ -1,7 +1,7 @@
 name: company_chat
 description: WhatsApp-style Company Chat for Android and iOS.
 publish_to: "none"
-version: 1.0.3+5
+version: 1.0.4+6
 
 environment:
   sdk: ^3.13.4

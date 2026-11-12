@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:company_chat/features/calls/call_signaling.dart';
 import 'package:company_chat/features/calls/voice_peer.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
@@ -42,8 +43,12 @@ class FlutterVoicePeer implements VoicePeer {
       peer._ice.add({
         'candidate': candidate.candidate,
         'sdpMid': candidate.sdpMid,
-        'sdpMLineIndex': candidate.sdpMLineIndex,
+        'sdpMLineIndex': parseSdpMLineIndex(candidate.sdpMLineIndex),
       });
+    };
+    pc.onTrack = (event) {
+      if (peer._disposed) return;
+      event.track.enabled = true;
     };
     pc.onConnectionState = (state) {
       if (peer._disposed) return;
@@ -87,7 +92,7 @@ class FlutterVoicePeer implements VoicePeer {
       RTCIceCandidate(
         candidate['candidate'] as String?,
         candidate['sdpMid'] as String?,
-        candidate['sdpMLineIndex'] as int?,
+        parseSdpMLineIndex(candidate['sdpMLineIndex']),
       ),
     );
   }

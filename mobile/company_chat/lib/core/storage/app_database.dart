@@ -57,15 +57,21 @@ class AppDatabase extends _$AppDatabase {
     final id = message['id'] as String?;
     final conversationId = message['conversationId'] as String?;
     if (id == null || conversationId == null) return;
-    await into(cachedMessages).insertOnConflictUpdate(
-      CachedMessagesCompanion.insert(
-        id: id,
-        conversationId: conversationId,
-        sequenceNumber: Value(message['sequenceNumber'] as int? ?? 0),
-        changeSeq: Value(message['changeSeq'] as int? ?? 0),
-        payload: jsonEncode(message),
-      ),
-    );
+    final clientId = message['clientMessageId'] as String?;
+    await transaction(() async {
+      if (clientId != null && clientId.isNotEmpty && clientId != id) {
+        await (delete(cachedMessages)..where((row) => row.id.equals(clientId))).go();
+      }
+      await into(cachedMessages).insertOnConflictUpdate(
+        CachedMessagesCompanion.insert(
+          id: id,
+          conversationId: conversationId,
+          sequenceNumber: Value(message['sequenceNumber'] as int? ?? 0),
+          changeSeq: Value(message['changeSeq'] as int? ?? 0),
+          payload: jsonEncode(message),
+        ),
+      );
+    });
   }
 
   Future<void> deleteMessage(String id) async {
@@ -101,8 +107,11 @@ class AppDatabase extends _$AppDatabase {
         await upsertMessage(message);
       }
       for (final draft in pending) {
-        final id = draft['clientMessageId'] ?? draft['id'];
-        final already = messages.any((row) => row['id'] == id || row['clientMessageId'] == id);
+        final already = messages.any((row) =>
+            row['id'] == draft['id'] ||
+            (draft['clientMessageId'] != null &&
+                draft['clientMessageId'] != '' &&
+                (row['id'] == draft['clientMessageId'] || row['clientMessageId'] == draft['clientMessageId'])));
         if (!already) await upsertMessage(draft);
       }
     });

@@ -7,6 +7,11 @@ import { loadEnv } from '../config/env.js';
 import { buildIceConfig, turnCredentials } from '../modules/calls/ice-config.js';
 import { callsService } from '../modules/calls/calls.service.js';
 import {
+  bufferCallSignal,
+  createCallSignaling,
+  signalingReplayForAccepted,
+} from '../modules/calls/calls.signaling.js';
+import {
   isIdempotentCallAction,
   nextCallStatus,
   signalingAllowed,
@@ -33,6 +38,22 @@ test('duplicate accept and end events are idempotent', () => {
   assert.equal(isIdempotentCallAction('rejected', 'reject'), true);
   assert.equal(isIdempotentCallAction('ended', 'end'), true);
   assert.equal(isIdempotentCallAction('ringing', 'end'), false);
+});
+
+test('early offer and caller ICE are replayed only to the accepted device', () => {
+  const signaling = createCallSignaling();
+  bufferCallSignal(signaling, 'offer', true, { callId: 'c1', sdp: 'offer-sdp' });
+  bufferCallSignal(signaling, 'ice', true, { callId: 'c1', candidate: { candidate: 'typ host', sdpMid: '0', sdpMLineIndex: 0 } });
+  bufferCallSignal(signaling, 'ice', true, { callId: 'c1', candidate: { candidate: 'typ relay', sdpMid: '0', sdpMLineIndex: 0 } });
+  const replay = signalingReplayForAccepted(signaling);
+  assert.equal(replay[0].event, 'call.offer');
+  assert.equal(replay[0].payload.sdp, 'offer-sdp');
+  assert.equal(replay.length, 3);
+  assert.equal(replay.filter((item) => item.event === 'call.ice_candidate').length, 2);
+  const replaced = bufferCallSignal(signaling, 'offer', true, { callId: 'c1', sdp: 'second-offer' });
+  assert.equal(replaced.offer.sdp, 'second-offer');
+  assert.equal(replaced.iceFromCaller.length, 0);
+  assert.deepEqual(signalingReplayForAccepted(createCallSignaling()), []);
 });
 
 test('signaling is limited to live call states', () => {

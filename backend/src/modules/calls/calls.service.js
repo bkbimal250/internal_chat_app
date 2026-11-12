@@ -5,6 +5,11 @@ import { AppError } from '../../utils/app-error.js';
 import { envelope } from '../../websocket/connection-manager.js';
 import { buildIceConfig } from './ice-config.js';
 import {
+  bufferCallSignal,
+  createCallSignaling,
+  signalingReplayForAccepted,
+} from './calls.signaling.js';
+import {
   ACTIVE_CALL_STATUSES,
   eventForStatus,
   isTerminalCallStatus,
@@ -84,6 +89,13 @@ export function callsService(app, config) {
     };
     emit(row.callerId, event, payload);
     emit(row.calleeId, event, payload);
+  }
+
+  function replayBufferedOffer(row) {
+    if (!row.acceptedSessionId) return;
+    for (const item of signalingReplayForAccepted(row.signaling)) {
+      emit(row.calleeId, item.event, item.payload, { onlySessionId: row.acceptedSessionId });
+    }
   }
 
   async function loadPeers(row) {
@@ -216,6 +228,7 @@ export function callsService(app, config) {
         calleeId,
         callerSessionId: sessionId,
         acceptedSessionId: null,
+        signaling: createCallSignaling(),
         callType: 'audio',
         status: 'ringing',
         expiresAt: new Date(now.getTime() + config.callTimeoutSeconds * 1000),
@@ -251,6 +264,7 @@ export function callsService(app, config) {
       emit(row.calleeId, 'call.accept', { callId: row.id, status: 'connecting', acceptedSessionId: sessionId }, {
         exceptSessionId: sessionId,
       });
+      replayBufferedOffer(updated);
       return updated;
     },
 
@@ -341,6 +355,7 @@ export function callsService(app, config) {
         if (!sdp || sdp.length > SDP_MAX) throw new AppError('SDP is invalid', 400, 'INVALID_EVENT');
         payload = { callId, sdp, type: kind };
       }
+      row.signaling = bufferCallSignal(row.signaling, kind, fromCaller, payload);
       const targetUserId = fromCaller ? row.calleeId : row.callerId;
       const targetSession = fromCaller ? row.acceptedSessionId : row.callerSessionId;
       const event = kind === 'ice' ? 'call.ice_candidate' : `call.${kind}`;

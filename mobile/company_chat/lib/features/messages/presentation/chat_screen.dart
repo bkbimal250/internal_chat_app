@@ -10,7 +10,7 @@ import 'package:company_chat/core/theme/app_colors.dart';
 import 'package:company_chat/core/utils/preview_text.dart';
 import 'package:company_chat/core/utils/typing_label.dart';
 import 'package:company_chat/core/utils/time_format.dart';
-import 'package:company_chat/core/widgets/user_avatar.dart';
+import 'package:company_chat/core/widgets/conversation_avatar.dart';
 import 'package:company_chat/features/auth/presentation/auth_controller.dart';
 import 'package:company_chat/features/calls/call_providers.dart';
 import 'package:company_chat/features/conversations/presentation/conversations_controller.dart';
@@ -121,13 +121,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         appBar: AppBar(
           title: Row(
             children: [
-              UserAvatar(
-                person: isGroup ? null : peer,
-                name: title,
-                userId: isGroup ? widget.conversationId : null,
-                hasPhoto: conversation?['hasAvatar'] == true,
-                photoVersion: conversation?['avatarVersion']?.toString(),
-                group: isGroup,
+              ConversationAvatar.from(
+                conversation: conversation,
+                peer: peer,
+                title: title,
                 online: !isGroup && online.contains(peer?['id']),
                 size: 36,
               ),
@@ -265,6 +262,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     final message = state.messages[i];
                     final previous = i == 0 ? null : state.messages[i - 1];
                     return _Bubble(
+                      key: ValueKey((message['id'] ?? message['clientMessageId'] ?? i).toString()),
                       message: message,
                       previous: previous,
                       currentUserId: me,
@@ -632,6 +630,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
 class _Bubble extends StatelessWidget {
   const _Bubble({
+    super.key,
     required this.message,
     required this.previous,
     required this.currentUserId,

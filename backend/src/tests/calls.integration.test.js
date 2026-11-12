@@ -240,6 +240,43 @@ test(
     assert.equal(missed.json().status, 'missed');
     assert.equal(missed.json().durationSeconds, undefined);
 
+    calleeSocket.terminate();
+    calleeSecond.terminate();
+    const replayCall = await app.inject({
+      method: 'POST',
+      url: '/api/v1/calls',
+      headers: bearer(callerA),
+      payload: { calleeId: callee.id },
+    });
+    assert.equal(replayCall.statusCode, 201);
+    const replayId = replayCall.json().id;
+    callerSocket.send(JSON.stringify({ event: 'call.offer', data: { callId: replayId, sdp: 'v=0\r\no=- 2 1 IN IP4 0.0.0.0' } }));
+    callerSocket.send(
+      JSON.stringify({
+        event: 'call.ice_candidate',
+        data: { callId: replayId, candidate: { candidate: 'candidate:1 1 UDP 1 1.1.1.1 9 typ relay', sdpMid: '0', sdpMLineIndex: 0 } },
+      }),
+    );
+    await pause(40);
+    const lateCallee = await open(wsUrl, token(calleeA));
+    t.after(() => lateCallee.terminate());
+    assert.equal(
+      lateCallee.events.some((event) => event.event === 'call.offer' && event.data.callId === replayId),
+      false,
+    );
+    const replayAccept = await app.inject({
+      method: 'POST',
+      url: `/api/v1/calls/${replayId}/accept`,
+      headers: bearer(calleeA),
+    });
+    assert.equal(replayAccept.statusCode, 200);
+    await until(() =>
+      lateCallee.events.some((event) => event.event === 'call.offer' && event.data.callId === replayId),
+    );
+    await until(() =>
+      lateCallee.events.some((event) => event.event === 'call.ice_candidate' && event.data.callId === replayId),
+    );
+
     const history = await app.inject({ method: 'GET', url: '/api/v1/calls/history', headers: bearer(callerA) });
     assert.ok(history.statusCode >= 400);
 

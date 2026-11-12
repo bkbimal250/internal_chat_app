@@ -11,6 +11,7 @@ import 'package:company_chat/features/media/media_prepare.dart';
 import 'package:company_chat/features/media/media_upload.dart';
 import 'package:company_chat/features/media/transfer_runtime.dart';
 import 'package:company_chat/features/messages/message_actions.dart';
+import 'package:company_chat/features/messages/message_identity.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
@@ -132,7 +133,7 @@ class MessagesController extends StateNotifier<MessagesState> {
       });
       var messages = _live(
         _merge(
-          [...state.messages, ...latestWindow, ...pending],
+          collapseDuplicateMessages([...state.messages, ...latestWindow, ...pending]),
           ((page['data'] as List?) ?? []).cast<Map>().map(Map<String, dynamic>.from),
         ),
       );
@@ -194,6 +195,7 @@ class MessagesController extends StateNotifier<MessagesState> {
       'replyToMessageId': state.replyTo?['id'],
     };
     _upsert(optimistic);
+    await _ref.read(databaseProvider).upsertMessage(optimistic);
     final quoted = state.replyTo;
     state = state.copyWith(clearReply: true);
     try {
@@ -592,17 +594,7 @@ class MessagesController extends StateNotifier<MessagesState> {
   }
 
   void _upsert(Map<String, dynamic> incoming) {
-    final next = [...state.messages];
-    final index = next.indexWhere((row) {
-      return row['id'] == incoming['id'] ||
-          (incoming['clientMessageId'] != null && row['clientMessageId'] == incoming['clientMessageId']);
-    });
-    if (index == -1) {
-      next.add(incoming);
-    } else {
-      next[index] = {...next[index], ...incoming, 'pending': incoming['pending'] ?? false};
-    }
-    state = state.copyWith(messages: _sort(next));
+    state = state.copyWith(messages: _sort(upsertLogicalMessage(state.messages, incoming)));
   }
 
   List<Map<String, dynamic>> _live(Iterable<Map<String, dynamic>> rows) {
@@ -635,14 +627,9 @@ class MessagesController extends StateNotifier<MessagesState> {
     List<Map<String, dynamic>> current,
     Iterable<Map<String, dynamic>> incoming,
   ) {
-    var next = [...current];
+    var next = collapseDuplicateMessages(current);
     for (final item in incoming) {
-      final index = next.indexWhere((row) => row['id'] == item['id'] || row['clientMessageId'] == item['clientMessageId']);
-      if (index == -1) {
-        next.add(item);
-      } else {
-        next[index] = {...next[index], ...item};
-      }
+      next = upsertLogicalMessage(next, item);
     }
     return _sort(next);
   }

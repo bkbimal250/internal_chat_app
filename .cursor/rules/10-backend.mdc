@@ -1,0 +1,19 @@
+---
+description: MiChat Fastify backend — reuse modules, preserve auth and S3
+globs: backend/**/*.js,backend/**/*.mjs
+alwaysApply: false
+---
+
+# Backend
+
+Stack: Node.js JavaScript, Fastify, PostgreSQL, Drizzle, authenticated WebSocket, JWT with rotating refresh tokens, private AWS S3 attachments.
+
+Inspect the relevant Fastify module first (`backend/src/modules/<name>/`). Reuse existing routes, schemas, and services. Do not introduce parallel APIs.
+
+Respect conversation/group membership checks. Preserve JWT/session security, refresh-token rotation, and replay detection (`refresh_reuse`). Do not weaken cookies/CSRF/native token handling.
+
+Do not add migrations unless the requested behavior needs schema changes. Do not rewrite database or WebSocket architecture.
+
+Use existing attachment multipart APIs. Voice calls are live-only; never store recordings or call history.
+
+Test the affected module first (`backend/src/tests/` or the module's unit tests).

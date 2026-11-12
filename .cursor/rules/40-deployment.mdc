@@ -1,0 +1,15 @@
+---
+description: MiChat deploy and GitHub Actions — no accidental production CD
+globs: deploy/**,.github/workflows/**
+alwaysApply: false
+---
+
+# Deployment
+
+Known layout: VPS project `/opt/company-chat`. Production API `https://api.michat.in`, web `https://web.michat.in`, TURN `turn.michat.in`. S3 bucket `michat-main-bucket` in `ap-south-1`.
+
+A push to `main` may trigger automatic production CD. Do not push to `main` or trigger workflows while merely preparing a PR.
+
+Preserve Docker exact-image-ID rollback. Preserve database and service isolation. Do not modify unrelated VPS services or overwrite production environment files.
+
+Do not print secrets. Do not run migrations unless needed and explicitly authorized. Keep deployment diffs minimal.

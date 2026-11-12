@@ -50,9 +50,37 @@ void main() {
     );
     await tester.pump();
     expect(tester.takeException(), isNull);
-    expect(find.text('Incoming voice call'), findsOneWidget);
+    expect(find.text('Incoming voice call'), findsWidgets);
+    expect(find.text('Ringing…'), findsNothing);
     expect(find.text('Accept'), findsOneWidget);
     expect(find.text('Decline'), findsOneWidget);
+  });
+
+  testWidgets('outgoing call stays Calling until a device acknowledges ringing', (tester) async {
+    const call = ActiveCall(
+      id: 'call-out',
+      peerId: 'user-2',
+      peerName: 'Rahul',
+      outgoing: true,
+      phase: CallPhase.initiating,
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          chatSocketProvider.overrideWithValue(_socket),
+          callControllerProvider.overrideWith(
+            (ref) => CallController(ref, peerFactory: (_) async => throw UnimplementedError()),
+          ),
+        ],
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: const ActiveCallScreen(call: call),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Calling…'), findsOneWidget);
+    expect(find.text('Ringing…'), findsNothing);
   });
 
   testWidgets('connected call screen shows mute speaker and end', (tester) async {

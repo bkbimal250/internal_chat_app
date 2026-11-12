@@ -107,6 +107,12 @@ test(
     assert.equal(call.peer.phoneE164, undefined);
     await until(() => calleeSocket.events.some((event) => event.event === 'call.invite' && event.data.callId === call.id));
     await until(() => calleeSecond.events.some((event) => event.event === 'call.invite'));
+    assert.equal(
+      callerSocket.events.some((event) => event.event === 'call.ringing'),
+      false,
+    );
+    calleeSocket.send(JSON.stringify({ event: 'call.ringing', data: { callId: call.id } }));
+    await until(() => callerSocket.events.some((event) => event.event === 'call.ringing' && event.data.callId === call.id));
 
     const strangerJoin = await app.inject({
       method: 'POST',
@@ -137,6 +143,13 @@ test(
     });
     assert.equal(accepted.statusCode, 200);
     assert.equal(accepted.json().status, 'connecting');
+    await pause(40);
+    assert.equal(
+      calleeSocket.events.some((event) => event.event === 'call.accept'),
+      false,
+    );
+    await until(() => callerSocket.events.some((event) => event.event === 'call.accept' && event.data.callId === call.id));
+    await until(() => calleeSecond.events.some((event) => event.event === 'call.accept'));
     const secondAccept = await app.inject({
       method: 'POST',
       url: `/api/v1/calls/${call.id}/accept`,

@@ -166,7 +166,6 @@ export function callsService(app, config) {
       caller: presentPeer(caller),
     };
     emit(row.calleeId, 'call.invite', invite);
-    emit(row.callerId, 'call.ringing', { callId: row.id, status: 'ringing', calleeId: row.calleeId });
     if (app.push?.enabled) {
       await app.push.sendToUser(row.calleeId, {
         title: caller.displayName || 'MiChat',
@@ -260,10 +259,15 @@ export function callsService(app, config) {
         return row;
       }
       const updated = apply(row, 'accept', { sessionId });
-      emitParticipants(updated, 'call.accept', { acceptedSessionId: sessionId });
-      emit(row.calleeId, 'call.accept', { callId: row.id, status: 'connecting', acceptedSessionId: sessionId }, {
-        exceptSessionId: sessionId,
-      });
+      const acceptPayload = {
+        callId: row.id,
+        callerId: row.callerId,
+        calleeId: row.calleeId,
+        status: 'connecting',
+        acceptedSessionId: sessionId,
+      };
+      emit(row.callerId, 'call.accept', acceptPayload);
+      emit(row.calleeId, 'call.accept', acceptPayload, { exceptSessionId: sessionId });
       replayBufferedOffer(updated);
       return updated;
     },

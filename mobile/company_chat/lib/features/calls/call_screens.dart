@@ -40,7 +40,7 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen> with Si
             children: [
               const Text('MiChat', style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w700, letterSpacing: 0.4)),
               const SizedBox(height: 8),
-              const Text('Incoming voice call', style: TextStyle(color: AppColors.sidebarForeground, fontWeight: FontWeight.w500)),
+              Text(callStatusLabel(call.phase, outgoing: false), style: const TextStyle(color: AppColors.sidebarForeground, fontWeight: FontWeight.w500)),
               const Spacer(),
               ScaleTransition(
                 scale: Tween(begin: 0.96, end: 1.04).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut)),
@@ -59,7 +59,7 @@ class _IncomingCallScreenState extends ConsumerState<IncomingCallScreen> with Si
                 style: const TextStyle(color: AppColors.sidebarForeground, fontSize: 28, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 8),
-              const Text('Ringing…', style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w600)),
+              const Text('Incoming voice call', style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w600)),
               const Spacer(),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -125,6 +125,14 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
           child: Column(
             children: [
+              Offstage(
+                offstage: true,
+                child: SizedBox(
+                  width: 1,
+                  height: 1,
+                  child: ref.read(callControllerProvider.notifier).remoteMediaView(),
+                ),
+              ),
               Align(
                 alignment: Alignment.centerLeft,
                 child: IconButton(

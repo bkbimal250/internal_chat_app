@@ -2,16 +2,24 @@ import 'dart:async';
 
 import 'package:company_chat/features/calls/call_signaling.dart';
 import 'package:company_chat/features/calls/voice_peer.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 class FlutterVoicePeer implements VoicePeer {
-  FlutterVoicePeer._(this._pc, this._local);
+  FlutterVoicePeer._(this._pc, this._local, this._remote);
 
   final RTCPeerConnection _pc;
   final MediaStream _local;
+  final RTCVideoRenderer? _remote;
   final _ice = StreamController<Map<String, dynamic>>.broadcast();
   final _state = StreamController<String>.broadcast();
   bool _disposed = false;
+
+  Widget get remoteView {
+    final remote = _remote;
+    if (remote == null) return const SizedBox.shrink();
+    return RTCVideoView(remote);
+  }
 
   @override
   Stream<Map<String, dynamic>> get iceCandidates => _ice.stream;
@@ -34,10 +42,17 @@ class FlutterVoicePeer implements VoicePeer {
       },
       'video': false,
     });
+    RTCVideoRenderer? remote;
+    try {
+      remote = RTCVideoRenderer();
+      await remote.initialize();
+    } catch (_) {
+      remote = null;
+    }
     for (final track in local.getAudioTracks()) {
       await pc.addTrack(track, local);
     }
-    final peer = FlutterVoicePeer._(pc, local);
+    final peer = FlutterVoicePeer._(pc, local, remote);
     pc.onIceCandidate = (candidate) {
       if (peer._disposed || candidate.candidate == null || candidate.candidate!.isEmpty) return;
       peer._ice.add({
@@ -49,6 +64,11 @@ class FlutterVoicePeer implements VoicePeer {
     pc.onTrack = (event) {
       if (peer._disposed) return;
       event.track.enabled = true;
+      final streams = event.streams;
+      final remote = peer._remote;
+      if (streams.isNotEmpty && remote != null) {
+        remote.srcObject = streams.first;
+      }
     };
     pc.onConnectionState = (state) {
       if (peer._disposed) return;
@@ -132,6 +152,10 @@ class FlutterVoicePeer implements VoicePeer {
     try {
       await _pc.close();
       await _pc.dispose();
+    } catch (_) {}
+    try {
+      _remote?.srcObject = null;
+      await _remote?.dispose();
     } catch (_) {}
     await _releaseAudioSession();
     await _ice.close();

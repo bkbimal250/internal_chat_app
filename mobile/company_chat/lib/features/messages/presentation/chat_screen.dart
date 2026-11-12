@@ -1,38 +1,37 @@
-import 'dart:async';
+﻿import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:company_chat/app/providers.dart';
 import 'package:company_chat/core/config/feature_flags.dart';
 import 'package:company_chat/core/network/api_error.dart';
-import 'package:company_chat/core/network/public_url.dart';
 import 'package:company_chat/core/notifications/notification_prefs.dart';
 import 'package:company_chat/core/theme/app_colors.dart';
 import 'package:company_chat/core/utils/preview_text.dart';
 import 'package:company_chat/core/utils/typing_label.dart';
-import 'package:company_chat/core/utils/time_format.dart';
 import 'package:company_chat/core/widgets/conversation_avatar.dart';
 import 'package:company_chat/features/auth/presentation/auth_controller.dart';
 import 'package:company_chat/features/calls/call_providers.dart';
 import 'package:company_chat/features/conversations/presentation/conversations_controller.dart';
 import 'package:company_chat/features/media/media_batch.dart';
-import 'package:company_chat/features/media/media_download.dart';
 import 'package:company_chat/features/media/media_limits.dart';
 import 'package:company_chat/features/media/media_prepare.dart';
+import 'package:company_chat/features/messages/message_actions.dart';
+import 'package:company_chat/features/messages/message_share.dart';
 import 'package:company_chat/features/messages/presentation/attach_sheet.dart';
 import 'package:company_chat/features/messages/presentation/messages_controller.dart';
+import 'package:company_chat/features/messages/presentation/widgets/delete_message_sheet.dart';
+import 'package:company_chat/features/messages/presentation/widgets/forward_picker.dart';
+import 'package:company_chat/features/messages/presentation/widgets/message_bubble.dart';
+import 'package:company_chat/features/messages/presentation/widgets/selection_toolbar.dart';
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:photo_view/photo_view.dart';
 import 'package:record/record.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:video_player/video_player.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key, required this.conversationId});
@@ -50,8 +49,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _recording = false;
   Duration _recordElapsed = Duration.zero;
   List<SelectedMedia> _drafts = [];
+  final Set<String> _selected = {};
   Timer? _typingStop;
   Timer? _recordTick;
+
+  bool get _selecting => _selected.isNotEmpty;
 
   @override
   void initState() {
@@ -113,12 +115,58 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final peer = conversation == null ? null : ref.read(conversationsControllerProvider.notifier).peer(conversation);
     final online = ref.watch(onlineUsersProvider);
 
+    final selectedMessages = state.messages.where((row) => _selected.contains(row['id'])).toList();
     return PopScope(
+      canPop: !_selecting,
       onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _selecting) {
+          setState(_selected.clear);
+          return;
+        }
         if (didPop) ref.read(viewedConversationProvider.notifier).state = null;
       },
       child: Scaffold(
-        appBar: AppBar(
+        appBar: _selecting
+            ? AppBar(
+                leading: IconButton(
+                  tooltip: 'Cancel',
+                  onPressed: () => setState(_selected.clear),
+                  icon: const Icon(Icons.close),
+                ),
+                title: Text('${_selected.length} selected'),
+                actions: [
+                  MessageSelectionActions(
+                    compact: MediaQuery.sizeOf(context).width < 400,
+                    showReply: selectionCanReply(selectedMessages),
+                    showForward: selectionCanForward(selectedMessages),
+                    showCopy: selectionCanCopy(selectedMessages),
+                    showDelete: selectionCanDelete(selectedMessages),
+                    showShare: selectionCanShare(selectedMessages),
+                    onReply: () {
+                      controller.setReply(selectedMessages.first);
+                      setState(_selected.clear);
+                    },
+                    onForward: () => _forwardSelected(controller, selectedMessages),
+                    onCopy: () async {
+                      await Clipboard.setData(ClipboardData(text: copySelectedText(selectedMessages)));
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied')));
+                      }
+                    },
+                    onDelete: () => _deleteSelected(controller, selectedMessages, conversation?['type'] as String?),
+                    onShare: () async {
+                      try {
+                        await const MessageShare().share(selectedMessages);
+                      } catch (error) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
+                        }
+                      }
+                    },
+                  ),
+                ],
+              )
+            : AppBar(
           title: Row(
             children: [
               ConversationAvatar.from(
@@ -261,18 +309,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     final i = state.messages.length - 1 - index;
                     final message = state.messages[i];
                     final previous = i == 0 ? null : state.messages[i - 1];
-                    return _Bubble(
-                      key: ValueKey((message['id'] ?? message['clientMessageId'] ?? i).toString()),
+                    final id = message['id'] as String?;
+                    return MessageBubble(
+                      key: ValueKey((id ?? message['clientMessageId'] ?? i).toString()),
                       message: message,
                       previous: previous,
                       currentUserId: me,
                       isGroup: isGroup,
                       members: (state.details?['members'] as List?) ?? [],
+                      selected: id != null && _selected.contains(id),
+                      selectionMode: _selecting,
                       onReply: () => controller.setReply(message),
-                      onEdit: message['senderId'] == me ? () => controller.setEditing(message) : null,
-                      onDelete: message['senderId'] == me ? () => controller.remove(message['id'] as String) : null,
-                      onHide: () => controller.hide(message['id'] as String),
-                      onForward: () => _forward(controller, message),
+                      onLongPress: () {
+                        if (id == null || !isSelectableMessage(message)) return;
+                        setState(() => _selected.add(id));
+                      },
+                      onTap: !_selecting
+                          ? null
+                          : () {
+                              if (id == null || !isSelectableMessage(message)) return;
+                              setState(() {
+                                if (_selected.contains(id)) {
+                                  _selected.remove(id);
+                                } else {
+                                  _selected.add(id);
+                                }
+                              });
+                            },
                     );
                   },
                 ),
@@ -311,7 +374,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                                 size: 18,
                               ),
                               const SizedBox(height: 4),
-                              Text(item.media.fileName, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10)),
+                              Text(
+                                item.media.fileName,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: true,
+                                style: const TextStyle(fontSize: 10),
+                              ),
                               Text(formatMediaSize(item.media.sizeBytes), style: const TextStyle(fontSize: 9, color: AppColors.mutedForeground)),
                             ],
                           ),
@@ -353,7 +422,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   ],
                 ),
               ),
-            if (!canSend)
+            if (_selecting)
+              const SizedBox.shrink()
+            else if (!canSend)
               const SafeArea(
                 child: Padding(
                   padding: EdgeInsets.all(16),
@@ -418,7 +489,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 ),
               ),
             ),
-            if (canSend && _emoji)
+            if (canSend && !_selecting && _emoji)
               SizedBox(
                 height: 280,
                 child: EmojiPicker(
@@ -605,357 +676,48 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
-  Future<void> _forward(MessagesController controller, Map<String, dynamic> message) async {
-    final conversations = ref.read(conversationsControllerProvider).items;
-    final target = await showModalBottomSheet<String>(
-      context: context,
-      builder: (context) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            const ListTile(title: Text('Forward to')),
-            for (final row in conversations)
-              if (row['id'] != widget.conversationId)
-                ListTile(
-                  title: Text(ref.read(conversationsControllerProvider.notifier).titleOf(row)),
-                  onTap: () => Navigator.pop(context, row['id'] as String),
-                ),
-          ],
-        ),
-      ),
+  Future<void> _forwardSelected(MessagesController controller, List<Map<String, dynamic>> messages) async {
+    final list = ref.read(conversationsControllerProvider);
+    final notifier = ref.read(conversationsControllerProvider.notifier);
+    final target = await showForwardPicker(
+      context,
+      conversations: list.items,
+      currentConversationId: widget.conversationId,
+      titleOf: notifier.titleOf,
+      peerOf: notifier.peer,
     );
-    if (target != null) await controller.forward(message, target);
-  }
-}
-
-class _Bubble extends StatelessWidget {
-  const _Bubble({
-    super.key,
-    required this.message,
-    required this.previous,
-    required this.currentUserId,
-    required this.isGroup,
-    required this.members,
-    required this.onReply,
-    required this.onHide,
-    required this.onForward,
-    this.onEdit,
-    this.onDelete,
-  });
-
-  final Map<String, dynamic> message;
-  final Map<String, dynamic>? previous;
-  final String? currentUserId;
-  final bool isGroup;
-  final List<dynamic> members;
-  final VoidCallback onReply;
-  final VoidCallback onHide;
-  final VoidCallback onForward;
-  final VoidCallback? onEdit;
-  final VoidCallback? onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final mine = message['senderId'] == currentUserId;
-    final showDay = !sameDay(previous?['createdAt'], message['createdAt']);
-    if (message['messageType'] == 'system') {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Center(
-          child: Text(
-            message['content'] as String? ?? '',
-            style: const TextStyle(fontSize: 12, color: AppColors.mutedForeground),
-          ),
-        ),
-      );
+    if (target == null) return;
+    if (messages.length == 1) {
+      await controller.forward(messages.first, target);
+    } else {
+      await controller.forwardMany(messages, target);
     }
-    final sender = members.whereType<Map>().cast<Map<dynamic, dynamic>>().where((row) => row['id'] == message['senderId']).firstOrNull ?? {};
-    final seq = (message['sequenceNumber'] as num?)?.toInt() ?? 0;
-    final read = members.whereType<Map>().any(
-          (row) => row['id'] != currentUserId && ((row['lastReadSeq'] as num?)?.toInt() ?? 0) >= seq,
-        );
-    final type = message['messageType'] as String? ?? 'text';
-    final content = (message['content'] as String?) ?? '';
-    final showText = message['deletedAt'] != null || (content.isNotEmpty && type == 'text') || (content.isNotEmpty && type != 'text');
-    return Column(
-      children: [
-        if (showDay)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              formatDateSeparator(message['createdAt']),
-              style: const TextStyle(fontSize: 11, color: AppColors.mutedForeground),
-            ),
-          ),
-        Slidable(
-          endActionPane: ActionPane(
-            motion: const DrawerMotion(),
-            children: [
-              SlidableAction(onPressed: (_) => onReply(), icon: Icons.reply, label: 'Reply', backgroundColor: AppColors.sidebarAccent),
-              SlidableAction(onPressed: (_) => onForward(), icon: Icons.forward, label: 'Forward', backgroundColor: AppColors.sidebar),
-              if (onEdit != null)
-                SlidableAction(onPressed: (_) => onEdit!(), icon: Icons.edit, label: 'Edit', backgroundColor: AppColors.gold),
-              SlidableAction(onPressed: (_) => onHide(), icon: Icons.visibility_off, label: 'Hide', backgroundColor: AppColors.mutedForeground),
-              if (onDelete != null)
-                SlidableAction(onPressed: (_) => onDelete!(), icon: Icons.delete, label: 'Delete', backgroundColor: AppColors.destructive),
-            ],
-          ),
-          child: Align(
-            alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-                decoration: BoxDecoration(
-                  color: message['deletedAt'] != null
-                      ? AppColors.muted
-                      : mine
-                          ? AppColors.outgoing
-                          : AppColors.incoming,
-                  borderRadius: BorderRadius.only(
-                    topLeft: const Radius.circular(12),
-                    topRight: const Radius.circular(12),
-                    bottomLeft: Radius.circular(mine ? 12 : 2),
-                    bottomRight: Radius.circular(mine ? 2 : 12),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (!mine && isGroup)
-                      Text(
-                        sender['displayName'] as String? ?? '',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF047857)),
-                      ),
-                    if (message['deletedAt'] == null && messageAttachments(message).isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: _AttachmentAlbum(files: messageAttachments(message)),
-                      ),
-                    if (showText)
-                      Text(
-                        message['deletedAt'] != null ? 'This message was deleted' : previewText(message),
-                        style: TextStyle(
-                          fontStyle: message['deletedAt'] != null ? FontStyle.italic : FontStyle.normal,
-                          color: AppColors.foreground,
-                        ),
-                      ),
-                    const SizedBox(height: 2),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          [
-                            formatMessageTime(message['createdAt']),
-                            if (message['expiresAt'] != null) 'expires ${formatMessageTime(message['expiresAt'])}',
-                          ].join(' · '),
-                          style: const TextStyle(fontSize: 10, color: AppColors.mutedForeground),
-                        ),
-                        if (mine) ...[
-                          const SizedBox(width: 4),
-                          Icon(
-                            message['pending'] == true
-                                ? Icons.access_time
-                                : message['failed'] == true
-                                    ? Icons.error_outline
-                                    : read
-                                        ? Icons.done_all
-                                        : Icons.done,
-                            size: 14,
-                            color: message['failed'] == true
-                                ? AppColors.destructive
-                                : read
-                                    ? AppColors.sidebar
-                                    : AppColors.mutedForeground,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
+    if (mounted) setState(_selected.clear);
+  }
+
+  Future<void> _deleteSelected(
+    MessagesController controller,
+    List<Map<String, dynamic>> messages,
+    String? conversationType,
+  ) async {
+    final me = ref.read(authControllerProvider).user?.id;
+    final allowEveryone = selectionCanDeleteForEveryone(
+      messages,
+      currentUserId: me,
+      conversationType: conversationType,
     );
-  }
-}
-
-class _AttachmentAlbum extends StatelessWidget {
-  const _AttachmentAlbum({required this.files});
-
-  final List<Map<String, dynamic>> files;
-
-  @override
-  Widget build(BuildContext context) {
-    if (files.length == 1) {
-      return _AttachmentThumb(attachment: files.first);
-    }
-    final visuals = files.where((file) => file['kind'] == 'image' || file['kind'] == 'video').toList();
-    final others = files.where((file) => file['kind'] != 'image' && file['kind'] != 'video').toList();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (visuals.isNotEmpty)
-          SizedBox(
-            width: 240,
-            child: GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: visuals.length > 4 ? 4 : visuals.length,
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 4,
-                crossAxisSpacing: 4,
-              ),
-              itemBuilder: (context, index) {
-                final extra = visuals.length - 4;
-                return Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    FittedBox(fit: BoxFit.cover, child: _AttachmentThumb(attachment: visuals[index])),
-                    if (index == 3 && extra > 0)
-                      Container(
-                        color: Colors.black54,
-                        alignment: Alignment.center,
-                        child: Text('+$extra', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                      ),
-                  ],
-                );
-              },
-            ),
-          ),
-        for (final file in others)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: _AttachmentThumb(attachment: file),
-          ),
-      ],
+    final choice = await showDeleteMessageSheet(
+      context,
+      count: messages.length,
+      allowEveryone: allowEveryone,
     );
-  }
-}
-
-class _AttachmentThumb extends ConsumerStatefulWidget {
-  const _AttachmentThumb({required this.attachment});
-
-  final Map<String, dynamic> attachment;
-
-  @override
-  ConsumerState<_AttachmentThumb> createState() => _AttachmentThumbState();
-}
-
-class _AttachmentThumbState extends ConsumerState<_AttachmentThumb> {
-  String? _url;
-  VideoPlayerController? _video;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  @override
-  void dispose() {
-    _video?.dispose();
-    super.dispose();
-  }
-
-  Future<void> _load() async {
-    final id = widget.attachment['id'] as String?;
-    if (id == null) return;
-    try {
-      final data = await ref.read(apiClientProvider).get<Map<String, dynamic>>('/api/v1/attachments/$id/url');
-      final url = data['url'] as String?;
-      if (!mounted) return;
-      setState(() => _url = url == null ? null : rewritePublicUrl(url));
-      if (widget.attachment['kind'] == 'video' && url != null) {
-        final player = VideoPlayerController.networkUrl(Uri.parse(url));
-        await player.initialize();
-        if (!mounted) {
-          await player.dispose();
-          return;
-        }
-        setState(() => _video = player);
-      }
-    } catch (_) {}
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final kind = widget.attachment['kind'] as String? ?? '';
-    final name = widget.attachment['displayName'] as String? ?? 'File';
-    if (kind == 'image' && _url != null) {
-      return GestureDetector(
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => Scaffold(
-                backgroundColor: Colors.black,
-                appBar: AppBar(backgroundColor: Colors.black),
-                body: PhotoView(imageProvider: CachedNetworkImageProvider(_url!)),
-              ),
-            ),
-          );
-        },
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: CachedNetworkImage(imageUrl: _url!, height: 180, width: 220, fit: BoxFit.cover),
-        ),
-      );
+    if (choice == null) return;
+    final ids = messages.map((row) => row['id'] as String).where((id) => id.isNotEmpty);
+    if (choice == DeleteMessageChoice.everyone) {
+      await controller.removeMany(ids);
+    } else {
+      await controller.hideMany(ids);
     }
-    if (kind == 'video') {
-      final player = _video;
-      if (player == null || !player.value.isInitialized) {
-        return const SizedBox(height: 120, width: 180, child: Center(child: CircularProgressIndicator()));
-      }
-      return GestureDetector(
-        onTap: () {
-          player.value.isPlaying ? player.pause() : player.play();
-          setState(() {});
-        },
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: SizedBox(
-            width: 220,
-            height: 160,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                VideoPlayer(player),
-                if (!player.value.isPlaying)
-                  const CircleAvatar(backgroundColor: Colors.black54, child: Icon(Icons.play_arrow, color: Colors.white)),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-    return InkWell(
-      onTap: () async {
-        final id = widget.attachment['id'] as String?;
-        if (id == null) return;
-        try {
-          final file = await downloadAttachmentFile(
-            api: ref.read(apiClientProvider),
-            attachmentId: id,
-            fileName: name,
-            sizeBytes: (widget.attachment['sizeBytes'] as num?)?.toInt(),
-          );
-          await launchUrl(Uri.file(file.path), mode: LaunchMode.externalApplication);
-        } catch (_) {
-          if (_url != null) await launchUrl(Uri.parse(_url!), mode: LaunchMode.externalApplication);
-        }
-      },
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(kind == 'audio' ? Icons.audiotrack : Icons.insert_drive_file_outlined, size: 18),
-          const SizedBox(width: 6),
-          Flexible(child: Text(name, overflow: TextOverflow.ellipsis)),
-        ],
-      ),
-    );
+    if (mounted) setState(_selected.clear);
   }
 }

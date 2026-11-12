@@ -168,8 +168,9 @@ class ActiveCall {
 String callStatusLabel(CallPhase phase, {required bool outgoing}) {
   switch (phase) {
     case CallPhase.initiating:
-    case CallPhase.ringing:
       return outgoing ? 'Calling…' : 'Incoming voice call';
+    case CallPhase.ringing:
+      return outgoing ? 'Ringing…' : 'Incoming voice call';
     case CallPhase.connecting:
       return 'Connecting…';
     case CallPhase.connected:

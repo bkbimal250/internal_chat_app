@@ -108,6 +108,7 @@ class MessagesController extends StateNotifier<MessagesState> {
   StreamSubscription<Map<String, dynamic>>? _sub;
   ProviderSubscription<String?>? _userSub;
   Future<void>? _loading;
+  final Set<String> _hiddenIds = {};
   ApiClient get _api => _ref.read(apiClientProvider);
 
   Future<void> load() => _loading ??= _load().whenComplete(() => _loading = null);
@@ -512,8 +513,7 @@ class MessagesController extends StateNotifier<MessagesState> {
     if (name == 'message.expired' || name == 'message.hidden') {
       final id = data['id'] as String?;
       if (id == null) return;
-      state = state.copyWith(messages: state.messages.where((row) => row['id'] != id).toList());
-      _ref.read(databaseProvider).deleteMessage(id);
+      _drop(id);
       return;
     }
     if (name == 'notification.created') {
@@ -522,14 +522,14 @@ class MessagesController extends StateNotifier<MessagesState> {
     if (name == 'message.created' || name == 'message.updated' || name == 'message.deleted') {
       if (data['expiredAt'] != null) {
         final id = data['id'] as String?;
-        if (id != null) {
-          state = state.copyWith(messages: state.messages.where((row) => row['id'] != id).toList());
-          _ref.read(databaseProvider).deleteMessage(id);
-        }
+        if (id != null) _drop(id);
         return;
       }
       _upsert(data);
-      _ref.read(databaseProvider).upsertMessage(data);
+      final id = data['id'] as String?;
+      if (id == null || !_hiddenIds.contains(id)) {
+        _ref.read(databaseProvider).upsertMessage(data);
+      }
       if (name == 'message.created' && data['id'] is String) {
         _ref.read(chatSocketProvider).send('message.delivered', {'messageId': data['id']});
       }
@@ -589,16 +589,23 @@ class MessagesController extends StateNotifier<MessagesState> {
   }
 
   void _drop(String id) {
+    _hiddenIds.add(id);
     state = state.copyWith(messages: state.messages.where((row) => row['id'] != id).toList());
     _ref.read(databaseProvider).deleteMessage(id);
   }
 
   void _upsert(Map<String, dynamic> incoming) {
+    final id = incoming['id'] as String?;
+    final clientId = incoming['clientMessageId'] as String?;
+    if ((id != null && _hiddenIds.contains(id)) || (clientId != null && _hiddenIds.contains(clientId))) return;
     state = state.copyWith(messages: _sort(upsertLogicalMessage(state.messages, incoming)));
   }
 
   List<Map<String, dynamic>> _live(Iterable<Map<String, dynamic>> rows) {
-    return rows.where((row) => !cachedPayloadExpired(row)).toList();
+    return rows
+        .where((row) => !cachedPayloadExpired(row))
+        .where((row) => !_hiddenIds.contains(row['id']) && !_hiddenIds.contains(row['clientMessageId']))
+        .toList();
   }
 
   int _minSeq(List<Map<String, dynamic>> rows) {

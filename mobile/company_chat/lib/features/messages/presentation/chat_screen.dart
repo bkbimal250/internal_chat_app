@@ -274,7 +274,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       onEdit: message['senderId'] == me ? () => controller.setEditing(message) : null,
                       onDelete: message['senderId'] == me ? () => controller.remove(message['id'] as String) : null,
                       onHide: () => controller.hide(message['id'] as String),
-                      onForward: () => _forward(controller, message['id'] as String),
+                      onForward: () => _forward(controller, message),
                     );
                   },
                 ),
@@ -607,7 +607,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
-  Future<void> _forward(MessagesController controller, String messageId) async {
+  Future<void> _forward(MessagesController controller, Map<String, dynamic> message) async {
     final conversations = ref.read(conversationsControllerProvider).items;
     final target = await showModalBottomSheet<String>(
       context: context,
@@ -626,7 +626,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ),
       ),
     );
-    if (target != null) await controller.forward(messageId, target);
+    if (target != null) await controller.forward(message, target);
   }
 }
 

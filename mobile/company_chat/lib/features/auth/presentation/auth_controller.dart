@@ -35,9 +35,11 @@ class AuthController extends StateNotifier<AuthState> {
   ApiClient get _api => _ref.read(apiClientProvider);
 
   Future<void> restore() async {
+    if (!mounted) return;
     state = const AuthState(status: AuthStatus.unknown);
     final store = _ref.read(sessionStoreProvider);
     final refresh = await store.readRefreshToken();
+    if (!mounted) return;
     if (refresh == null || refresh.isEmpty) {
       state = const AuthState(status: AuthStatus.anonymous);
       return;
@@ -50,12 +52,14 @@ class AuthController extends StateNotifier<AuthState> {
       } on ApiError catch (error) {
         if (error.isSessionInvalid) rethrow;
       }
+      if (!mounted) return;
       state = AuthState(
         user: UserProfile.fromJson(profile),
         status: AuthStatus.authenticated,
       );
       _ref.read(currentUserIdProvider.notifier).state = state.user?.id;
       await store.writeUserId(state.user?.id);
+      if (!mounted) return;
       _ref.read(chatSocketProvider).connect();
       try {
         await PushNotifications.register(_api);
@@ -63,24 +67,31 @@ class AuthController extends StateNotifier<AuthState> {
       } catch (_) {}
     } on ApiError catch (error) {
       if (error.isSessionInvalid) {
+        if (!mounted) return;
         await _clearAccountCaches(state.user?.id ?? await store.readUserId());
+        if (!mounted) return;
         await store.clear();
+        if (!mounted) return;
         state = const AuthState(status: AuthStatus.anonymous);
         return;
       }
+      if (!mounted) return;
       state = const AuthState(status: AuthStatus.unavailable);
     } catch (_) {
+      if (!mounted) return;
       state = const AuthState(status: AuthStatus.unavailable);
     }
   }
 
   void _forceAnonymous() {
+    if (!mounted) return;
     final userId = state.user?.id;
     _ref.read(chatSocketProvider).disconnect();
     unawaited(() async {
       await _clearAccountCaches(userId ?? await _ref.read(sessionStoreProvider).readUserId());
     }());
     _ref.read(currentUserIdProvider.notifier).state = null;
+    if (!mounted) return;
     state = const AuthState(status: AuthStatus.anonymous);
   }
 

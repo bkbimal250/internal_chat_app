@@ -166,7 +166,7 @@ export function otpService(app, config) {
   };
 
   return {
-    async request(input) {
+    async request(input, logger = app.log) {
       const phoneE164 = normalizePhone(input.phone);
       if ((await recentCount(phoneE164)) >= config.otpMaxPerHour) {
         throw new AppError('Too many verification requests', 429, 'RATE_LIMITED');
@@ -194,11 +194,14 @@ export function otpService(app, config) {
           lastSentAt: new Date(),
           consumedAt: new Date(),
         });
-        app.log.info({ event: 'OTP_REQUEST_ACCEPTED', purpose: 'login' }, 'OTP request accepted');
+        logger.info({ event: 'OTP_REQUEST_ACCEPTED', purpose: 'login' }, 'OTP request accepted');
         return accepted(config);
       }
       const challenge = await createChallenge({ phoneE164, purpose: 'login', code });
-      await dispatchSms({ phoneE164, code, challenge, purpose: 'login' });
+      const delivered = await dispatchSms({ phoneE164, code, challenge, purpose: 'login', logger });
+      if (!delivered && config.nodeEnv !== 'test') {
+        throw new AppError('Unable to send a verification code right now', 503, 'SMS_UNAVAILABLE');
+      }
       return accepted(config);
     },
 
@@ -235,7 +238,7 @@ export function otpService(app, config) {
       const latest = await latestOpen({ phoneE164, purpose: 'enroll', userId });
       if (inCooldown(latest)) return accepted(config);
       if (!sms.enabled && config.nodeEnv !== 'test') {
-        app.log.warn({ event: 'SMS_UNCONFIGURED' }, 'SMS provider credentials are missing');
+        logger.warn({ event: 'SMS_UNCONFIGURED' }, 'SMS provider credentials are missing');
         throw new AppError('Unable to send a verification code right now', 503, 'SMS_UNAVAILABLE');
       }
       const code = String(randomInt(0, 1_000_000)).padStart(6, '0');

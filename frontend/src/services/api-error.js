@@ -45,6 +45,9 @@ export function toApiError(error) {
 }
 
 export function getErrorMessage(error) {
+  if (error instanceof ApiError && error.code === 'SMS_UNAVAILABLE') {
+    return 'Unable to send verification code right now. Please try again later or use another sign-in method.'
+  }
   if (error instanceof ApiError) return error.message
   if (error instanceof Error) return error.message
   return 'Unexpected error'

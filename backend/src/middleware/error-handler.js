@@ -22,7 +22,7 @@ export function installErrorHandler(app, config) {
       error: {
         code,
         message:
-          error instanceof AppError && statusCode < 500
+          error instanceof AppError && (statusCode < 500 || error.code === 'SMS_UNAVAILABLE')
             ? error.message
             : error.validation
               ? 'Request validation failed'

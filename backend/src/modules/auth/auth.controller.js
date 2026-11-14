@@ -55,7 +55,7 @@ export function authController(app, config) {
       checkTransport(request, config);
       return response(reply, await service.login(request.body, { ip: request.ip }));
     },
-    requestOtp: async (request) => otp.request(request.body),
+    requestOtp: async (request) => otp.request(request.body, request.log),
     verifyOtp: async (request, reply) => {
       checkTransport(request, config);
       const user = await otp.verify(request.body);

@@ -13,7 +13,7 @@ Future<AttachChoice?> showAttachSheet(BuildContext context, {MediaQuality qualit
   return showModalBottomSheet<AttachChoice>(
     context: context,
     backgroundColor: AppColors.card,
-    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
     builder: (context) {
       return SafeArea(
         child: StatefulBuilder(
@@ -29,6 +29,11 @@ Future<AttachChoice?> showAttachSheet(BuildContext context, {MediaQuality qualit
                     margin: const EdgeInsets.only(bottom: 16),
                     decoration: BoxDecoration(color: AppColors.border, borderRadius: BorderRadius.circular(99)),
                   ),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Share', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                  ),
+                  const SizedBox(height: 12),
                   Wrap(
                     spacing: 8,
                     children: [
@@ -45,27 +50,27 @@ Future<AttachChoice?> showAttachSheet(BuildContext context, {MediaQuality qualit
                         ),
                     ],
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 20),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
+                      _AttachTile(
+                        color: const Color(0xFF5B7C99),
+                        icon: Icons.photo_library_outlined,
+                        label: 'Gallery',
+                        onTap: () => Navigator.pop(context, AttachChoice('media', selected)),
+                      ),
+                      _AttachTile(
+                        color: const Color(0xFFC6A04B),
+                        icon: Icons.photo_camera_outlined,
+                        label: 'Camera',
+                        onTap: () => Navigator.pop(context, AttachChoice('camera', selected)),
+                      ),
                       _AttachTile(
                         color: const Color(0xFF5B6B8C),
                         icon: Icons.insert_drive_file_outlined,
                         label: 'Document',
                         onTap: () => Navigator.pop(context, AttachChoice('document', selected)),
-                      ),
-                      _AttachTile(
-                        color: const Color(0xFFC2413B),
-                        icon: Icons.photo_library_outlined,
-                        label: 'Photos &\nvideos',
-                        onTap: () => Navigator.pop(context, AttachChoice('media', selected)),
-                      ),
-                      _AttachTile(
-                        color: const Color(0xFFC2413B),
-                        icon: Icons.photo_camera_outlined,
-                        label: 'Camera',
-                        onTap: () => Navigator.pop(context, AttachChoice('camera', selected)),
                       ),
                       _AttachTile(
                         color: const Color(0xFF8B5E3C),
@@ -102,7 +107,7 @@ Future<String?> showCameraCaptureSheet(BuildContext context) {
           ListTile(
             leading: const Icon(Icons.videocam_outlined, color: AppColors.gold),
             title: const Text('Video'),
-            subtitle: const Text('Includes recorded audio'),
+            subtitle: const Text('Send a recorded video message'),
             onTap: () => Navigator.pop(context, 'video'),
           ),
         ],
@@ -129,9 +134,9 @@ class _AttachTile extends StatelessWidget {
         child: Column(
           children: [
             CircleAvatar(
-              radius: 26,
+              radius: 28,
               backgroundColor: color,
-              child: Icon(icon, color: Colors.white),
+              child: Icon(icon, color: Colors.white, size: 26),
             ),
             const SizedBox(height: 8),
             Text(

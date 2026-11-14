@@ -4,12 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       api_base_url:
-        description: Production HTTPS API origin, for example https://chat.example.com
+        description: Production HTTPS API origin
         required: true
+        default: https://api.michat.in
         type: string
       ws_url:
-        description: Production WSS endpoint, for example wss://chat.example.com/api/v1/ws
+        description: Production WSS endpoint
         required: true
+        default: wss://api.michat.in/api/v1/ws
         type: string
 
 permissions:

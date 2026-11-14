@@ -6,6 +6,12 @@ DateTime? asDate(Object? value) {
   return DateTime.tryParse(value.toString())?.toLocal();
 }
 
+String formatClock(Object? value) {
+  final date = asDate(value);
+  if (date == null) return '';
+  return DateFormat('HH:mm').format(date);
+}
+
 String formatMessageTime(Object? value) {
   final date = asDate(value);
   if (date == null) return '';

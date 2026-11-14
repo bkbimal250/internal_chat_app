@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:company_chat/app/providers.dart';
 import 'package:company_chat/core/network/public_url.dart';
+import 'package:company_chat/core/storage/media_cache.dart';
 import 'package:company_chat/core/theme/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -85,6 +86,8 @@ class UserAvatar extends ConsumerWidget {
               : ClipOval(
                   child: CachedNetworkImage(
                     imageUrl: imageUrl,
+                    cacheKey: avatarCacheKey(id: id, version: version, group: group),
+                    cacheManager: miChatMediaCache.avatars,
                     width: size,
                     height: size,
                     fit: BoxFit.cover,
@@ -107,7 +110,7 @@ class UserAvatar extends ConsumerWidget {
               width: size * 0.28,
               height: size * 0.28,
               decoration: BoxDecoration(
-                color: AppColors.unread,
+                color: AppColors.success,
                 shape: BoxShape.circle,
                 border: Border.all(color: AppColors.card, width: 2),
               ),

@@ -31,9 +31,9 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Change password')),
       body: ListView(
-        padding: const EdgeInsets.all(24),
+        padding: AppBreakpoints.pagePadding(context),
         children: [
-          const Text('Choose a new password with at least 12 characters.'),
+          const Text('Choose a new password with at least 12 characters.', style: TextStyle(color: AppColors.slate)),
           const SizedBox(height: 16),
           TextField(controller: _current, obscureText: true, decoration: const InputDecoration(labelText: 'Current password')),
           const SizedBox(height: 12),

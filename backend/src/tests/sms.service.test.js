@@ -116,6 +116,14 @@ test('OTP SMS posts the encoded template and treats provider failure as an error
 
 test('OTP SMS classifies timeouts without exposing the request URL', async () => {
   assert.equal(classifySmsFailure({ name: 'TimeoutError', message: 'aborted' }), 'timeout');
+  assert.equal(
+    classifySmsFailure({
+      name: 'TypeError',
+      message: 'fetch failed',
+      cause: { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', message: 'unable to verify the first certificate' },
+    }),
+    'tls_error',
+  );
   const events = [];
   const timedOut = smsService(config({ NODE_ENV: 'development' }), {
     info: (fields) => events.push(fields.event),
@@ -127,6 +135,25 @@ test('OTP SMS classifies timeouts without exposing the request URL', async () =>
   });
   await assert.rejects(() => timedOut.sendOtp('+919876543210', '482193'), /failed/);
   assert.deepEqual(events, ['SMS_PROVIDER_ATTEMPTED', 'SMS_TIMEOUT']);
+});
+
+test('OTP SMS records a TLS failure without logging provider credentials or URL', async () => {
+  const events = [];
+  const tlsFailed = smsService(config(), {
+    info: (fields) => events.push(fields.event),
+    warn: (fields) => events.push(fields.event),
+  }, async () => {
+    const error = new TypeError('fetch failed');
+    error.cause = Object.assign(new Error('unable to verify the first certificate'), {
+      code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+    });
+    throw error;
+  });
+  await assert.rejects(
+    () => tlsFailed.sendOtp('+919876543210', '123456'),
+    (error) => error.smsFailure === 'tls_error',
+  );
+  assert.deepEqual(events, ['SMS_PROVIDER_ATTEMPTED', 'SMS_TLS_ERROR']);
 });
 
 test('production requires Hilite SMS credentials instead of Twilio', () => {

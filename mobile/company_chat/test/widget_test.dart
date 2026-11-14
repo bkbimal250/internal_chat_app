@@ -9,6 +9,7 @@ import 'package:company_chat/core/notifications/notify_incoming.dart';
 import 'package:company_chat/core/utils/preview_text.dart';
 import 'package:company_chat/core/utils/typing_label.dart';
 import 'package:company_chat/core/utils/time_format.dart';
+import 'package:company_chat/core/widgets/conversation_tile.dart';
 import 'package:company_chat/features/auth/presentation/login_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -151,13 +152,35 @@ void main() {
     );
   });
 
+  test('group conversation preview prefixes the sender name', () {
+    expect(
+      conversationPreview({
+        'type': 'group',
+        'members': [
+          {'id': 'a', 'displayName': 'Asha'},
+          {'id': 'me', 'displayName': 'Me'},
+        ],
+        'latestMessage': {'senderId': 'a', 'content': 'Please check the report', 'messageType': 'text'},
+      }, currentUserId: 'me'),
+      'Asha: Please check the report',
+    );
+    expect(
+      conversationPreview({
+        'type': 'group',
+        'latestMessage': {'senderId': 'me', 'content': 'Done', 'messageType': 'text'},
+      }, currentUserId: 'me'),
+      'You: Done',
+    );
+  });
+
   test('formats today as a clock time', () {
     final now = DateTime.now();
     expect(formatMessageTime(now), isNotEmpty);
+    expect(formatClock(now), matches(RegExp(r'^\d{2}:\d{2}$')));
     expect(formatDateSeparator(now), 'Today');
   });
 
-  testWidgets('login screen shows OTP and username tabs', (tester) async {
+  testWidgets('login screen defaults to phone OTP', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         child: MaterialApp(
@@ -167,9 +190,71 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.text('Company Chat'), findsOneWidget);
-    expect(find.text('Phone & OTP'), findsOneWidget);
-    expect(find.text('Username'), findsOneWidget);
+    expect(find.text('MiChat'), findsOneWidget);
+    expect(find.text('Welcome to MiChat'), findsOneWidget);
+    expect(find.text('Send OTP'), findsOneWidget);
+    expect(find.text('Try another way'), findsOneWidget);
+    expect(find.text('Username'), findsNothing);
+    expect(find.text('Phone & OTP'), findsNothing);
+  });
+
+  testWidgets('try another way switches to username login', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: const LoginScreen(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Try another way'));
+    await tester.pump();
+    expect(find.text('Sign in with username'), findsOneWidget);
+    expect(find.text('Username'), findsWidgets);
+    expect(find.text('Password'), findsOneWidget);
+    await tester.tap(find.text('Back to Phone & OTP'));
+    await tester.pump();
+    expect(find.text('Welcome to MiChat'), findsOneWidget);
+    expect(find.text('Send OTP'), findsOneWidget);
+  });
+
+  testWidgets('login stays readable on a compact phone', (tester) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: const LoginScreen(),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(find.text('Send OTP'), findsOneWidget);
+  });
+
+  testWidgets('conversation tiles keep long names and timestamps aligned', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: ConversationTile(
+            title: 'Very long employee display name that should ellipsize instead of overflowing the row',
+            preview: 'This is a long preview of the latest message that also needs to stay on one line',
+            time: '10:45 AM',
+            unread: 12,
+            onTap: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(find.text('10:45 AM'), findsOneWidget);
   });
 
   test('maps attachment names to allowed MIME types', () {

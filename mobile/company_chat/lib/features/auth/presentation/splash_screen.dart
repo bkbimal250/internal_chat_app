@@ -1,27 +1,48 @@
 import 'package:company_chat/core/theme/app_colors.dart';
+import 'package:company_chat/core/widgets/brand_mark.dart';
+import 'package:company_chat/features/auth/presentation/auth_controller.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-class SplashScreen extends StatelessWidget {
+class SplashScreen extends ConsumerWidget {
   const SplashScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      backgroundColor: AppColors.sidebar,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircleAvatar(
-              radius: 28,
-              backgroundColor: AppColors.sidebarAccent,
-              child: Text('CC', style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w700)),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final unavailable = ref.watch(authControllerProvider).status == AuthStatus.unavailable;
+    return Scaffold(
+      backgroundColor: AppColors.navy,
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const BrandMark(inverted: true),
+                const SizedBox(height: 28),
+                if (unavailable) ...[
+                  const Text(
+                    "You're offline. Trying to reconnect.",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.ivory, fontSize: 15),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    onPressed: () => ref.read(authControllerProvider.notifier).restore(),
+                    child: const Text('Try again'),
+                  ),
+                ] else ...[
+                  const CircularProgressIndicator(color: AppColors.gold),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Restoring your session…',
+                    style: TextStyle(color: AppColors.ivory),
+                  ),
+                ],
+              ],
             ),
-            SizedBox(height: 16),
-            Text('Company Chat', style: TextStyle(color: AppColors.sidebarForeground, fontSize: 20)),
-            SizedBox(height: 12),
-            CircularProgressIndicator(color: AppColors.gold),
-          ],
+          ),
         ),
       ),
     );

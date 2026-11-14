@@ -35,7 +35,7 @@ Do not start a live deploy until the blockers below are resolved and you explici
 | GitHub Actions CI (lint, tests, frontend build, image build, Compose config) | READY | `.github/workflows/ci.yml` |
 | GHCR publish on `main` with `sha-<git-sha>` tags | READY / UNVERIFIED | Workflow exists; no image has been pushed from this machine |
 | VPS pull-only deploy | BLOCKED | `DEPLOY_ENABLED` must stay unset until you approve |
-| SMS (Hilite DLT) | BLOCKED | Production process exits without `SMS_USERNAME`, `SMS_API_KEY`, `SMS_TEMPLATE_ID` |
+| SMS (Hilite DLT) | BLOCKED | The configured HTTPS gateway currently serves an incomplete TLS certificate chain. Node rejects it with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`; request that the provider repair its HTTPS chain before enabling live OTP sends. |
 | JWT signing secret | NEEDS CONFIGURATION | `JWT_SECRET` ≥ 64 random characters, unique to production |
 | Database password | NEEDS CONFIGURATION | `POSTGRES_PASSWORD` on the VPS only |
 | Firebase Admin + Android/iOS apps | NEEDS CONFIGURATION | Push disables itself without a real service-account JSON |

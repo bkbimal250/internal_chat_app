@@ -12,11 +12,18 @@ flutter pub get
 flutter run --dart-define=API_BASE_URL=http://10.0.2.2:3001
 ```
 
-- Android emulator: `http://10.0.2.2:3001` (default on Android)
-- iOS Simulator: `http://127.0.0.1:3001`
-- Physical device: the Windows host LAN IP, for example `http://192.168.1.20:3001`
+- Android emulator (debug): `http://10.0.2.2:3001` (default on Android)
+- iOS Simulator (debug): `http://127.0.0.1:3001`
+- Production: `https://api.michat.in` (default for release builds)
 
-Override WebSocket separately if needed:
+Production builds must use HTTPS/WSS and never localhost, `10.0.2.2`, or a VPS IP:
+
+```powershell
+flutter run --release --dart-define=API_BASE_URL=https://api.michat.in --dart-define=WS_URL=wss://api.michat.in/api/v1/ws
+flutter build apk --release --dart-define=API_BASE_URL=https://api.michat.in --dart-define=WS_URL=wss://api.michat.in/api/v1/ws
+```
+
+Debug WebSocket override against a local API:
 
 ```powershell
 flutter run --dart-define=API_BASE_URL=http://10.0.2.2:3001 --dart-define=WS_URL=ws://10.0.2.2:3001/api/v1/ws

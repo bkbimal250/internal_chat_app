@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:company_chat/app/providers.dart';
 import 'package:company_chat/core/notifications/notification_prefs.dart';
 import 'package:company_chat/core/theme/app_colors.dart';
+import 'package:company_chat/core/utils/retention_copy.dart';
+import 'package:company_chat/core/widgets/michat_controls.dart';
 import 'package:company_chat/core/widgets/user_avatar.dart';
 import 'package:company_chat/features/auth/presentation/auth_controller.dart';
 import 'package:flutter/material.dart';
@@ -21,20 +23,23 @@ class SettingsScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         children: [
+          const MiChatSectionHeader('Account'),
           ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
             leading: UserAvatar(
               name: user?.displayName,
               url: user?.profilePhotoUrl,
               userId: user?.id,
               hasPhoto: user?.hasProfilePhoto,
               photoVersion: user?.photoVersion,
-              size: 52,
+              size: 56,
             ),
-            title: Text(user?.displayName ?? ''),
-            subtitle: Text('@${user?.username ?? ''} · ${user?.role}'),
+            title: Text(user?.displayName ?? '', style: const TextStyle(fontWeight: FontWeight.w700)),
+            subtitle: Text('@${user?.username ?? ''}'),
+            trailing: const Icon(Icons.chevron_right, color: AppColors.slate),
             onTap: () => context.push('/profile'),
           ),
-          const Divider(),
+          const MiChatSectionHeader('Security'),
           ListTile(
             leading: const Icon(Icons.lock_outline, color: AppColors.gold),
             title: const Text('Change password'),
@@ -45,26 +50,70 @@ class SettingsScreen extends ConsumerWidget {
             title: const Text('Devices and sessions'),
             onTap: () => context.push('/devices'),
           ),
+          const MiChatSectionHeader('Preferences'),
           ListTile(
             leading: const Icon(Icons.notifications_outlined, color: AppColors.gold),
             title: const Text('Notifications'),
             subtitle: const Text('Sound, preview, mute, and reminders'),
             onTap: () => context.push('/settings/notifications'),
           ),
-          const ListTile(
-            leading: Icon(Icons.schedule_outlined, color: AppColors.gold),
-            title: Text('Chat retention'),
-            subtitle: Text(
-              'Messages older than 90 days are automatically deleted according to your company\'s retention policy.',
-            ),
-          ),
+          const _RetentionTile(),
+          const MiChatSectionHeader('Session'),
           ListTile(
-            leading: const Icon(Icons.logout, color: AppColors.destructive),
+            leading: const Icon(Icons.logout, color: AppColors.error),
             title: const Text('Sign out'),
-            onTap: () => ref.read(authControllerProvider.notifier).logout(),
+            onTap: () async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Sign out?'),
+                  content: const Text('You will need to sign in again to use MiChat.'),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+                    FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Sign out')),
+                  ],
+                ),
+              );
+              if (confirmed == true) await ref.read(authControllerProvider.notifier).logout();
+            },
           ),
+          const SizedBox(height: 24),
         ],
       ),
+    );
+  }
+}
+
+class _RetentionTile extends ConsumerStatefulWidget {
+  const _RetentionTile();
+
+  @override
+  ConsumerState<_RetentionTile> createState() => _RetentionTileState();
+}
+
+class _RetentionTileState extends ConsumerState<_RetentionTile> {
+  Map<String, dynamic>? _policy;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_load);
+  }
+
+  Future<void> _load() async {
+    try {
+      final data = await ref.read(apiClientProvider).get<Map<String, dynamic>>('/api/v1/retention/policy');
+      if (mounted) setState(() => _policy = data);
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = retentionCopy(_policy) ?? 'Your company retention policy is shown in each conversation.';
+    return ListTile(
+      leading: const Icon(Icons.schedule_outlined, color: AppColors.gold),
+      title: const Text('Chat retention'),
+      subtitle: Text(copy),
     );
   }
 }
@@ -111,7 +160,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Your info')),
       body: ListView(
-        padding: const EdgeInsets.all(24),
+        padding: AppBreakpoints.pagePadding(context),
         children: [
           Center(
             child: UserAvatar(

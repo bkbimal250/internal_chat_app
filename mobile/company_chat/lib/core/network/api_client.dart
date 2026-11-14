@@ -39,8 +39,26 @@ class ApiClient {
               _attach(retry);
               handler.resolve(await dio.fetch(retry));
               return;
-            } catch (_) {
-              await store.clear();
+            } catch (refreshError) {
+              final apiError = refreshError is ApiError
+                  ? refreshError
+                  : refreshError is DioException
+                      ? toApiError(refreshError)
+                      : ApiError(message: refreshError.toString());
+              if (apiError.isSessionInvalid) {
+                await store.clear();
+                onSessionInvalid?.call();
+                handler.next(error);
+                return;
+              }
+              handler.reject(
+                DioException(
+                  requestOptions: error.requestOptions,
+                  error: apiError,
+                  type: DioExceptionType.connectionError,
+                ),
+              );
+              return;
             }
           }
           handler.next(error);
@@ -51,13 +69,16 @@ class ApiClient {
 
   final SessionStore store;
   final Dio dio;
+  void Function()? onSessionInvalid;
   Future<Map<String, dynamic>>? _refreshing;
 
   void _attach(RequestOptions options) {
     options.headers['X-Requested-With'] = AppConfig.requestedWith;
-    final token = store.accessToken;
-    if (token != null && token.isNotEmpty) {
-      options.headers['Authorization'] = 'Bearer $token';
+    if (!_isAuthUrl(options.path)) {
+      final token = store.accessToken;
+      if (token != null && token.isNotEmpty) {
+        options.headers['Authorization'] = 'Bearer $token';
+      }
     }
     final method = options.method.toUpperCase();
     if (['POST', 'PUT', 'PATCH', 'DELETE'].contains(method) && store.csrfToken != null) {
@@ -73,21 +94,34 @@ class ApiClient {
 
   Future<Map<String, dynamic>> refresh() {
     _refreshing ??= () async {
-      final refreshToken = await store.readRefreshToken();
-      if (refreshToken == null || refreshToken.isEmpty) {
-        throw const ApiError(message: 'Session expired', status: 401, code: 'UNAUTHORIZED');
+      try {
+        final refreshToken = await store.readRefreshToken();
+        if (refreshToken == null || refreshToken.isEmpty) {
+          throw const ApiError(message: 'Session expired', status: 401, code: 'UNAUTHORIZED');
+        }
+        final response = await dio.post<Map<String, dynamic>>(
+          '/api/v1/auth/refresh',
+          data: {
+            'clientType': 'native',
+            'refreshToken': refreshToken,
+          },
+        );
+        final data = response.data ?? {};
+        _applySession(data);
+        await store.writeRefreshToken(data['refreshToken'] as String? ?? refreshToken);
+        return data;
+      } catch (error) {
+        final apiError = error is ApiError
+            ? error
+            : error is DioException
+                ? toApiError(error)
+                : ApiError(message: error.toString());
+        if (apiError.isSessionInvalid) {
+          await store.clear();
+          onSessionInvalid?.call();
+        }
+        throw apiError;
       }
-      final response = await dio.post<Map<String, dynamic>>(
-        '/api/v1/auth/refresh',
-        data: {
-          'clientType': 'native',
-          'refreshToken': refreshToken,
-        },
-      );
-      final data = response.data ?? {};
-      _applySession(data);
-      await store.writeRefreshToken(data['refreshToken'] as String? ?? refreshToken);
-      return data;
     }()
         .whenComplete(() => _refreshing = null);
     return _refreshing!;

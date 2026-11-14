@@ -22,7 +22,7 @@ NotificationCopy messageNotificationCopy({
 }) {
   if (!showPreview) {
     return NotificationCopy(
-      title: 'Company Chat',
+      title: 'MiChat',
       body: isGroup ? 'New group message' : 'New message',
     );
   }

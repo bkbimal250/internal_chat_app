@@ -32,7 +32,7 @@ export function usersController(app, config) {
   return {
     me: (req) => present(req.auth.user),
     updateMe: async (req) => present(await service.updateMe(req.auth.userId, req.body)),
-    requestPhoneOtp: (req) => otp.enrollRequest(req.auth.userId, req.body.phone),
+    requestPhoneOtp: (req) => otp.enrollRequest(req.auth.userId, req.body.phone, req.log),
     verifyPhone: async (req) =>
       present(await otp.enrollVerify(req.auth.userId, req.body.phone, req.body.code)),
     directory,

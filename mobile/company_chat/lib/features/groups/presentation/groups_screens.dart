@@ -48,12 +48,17 @@ class _GroupsScreenState extends ConsumerState<GroupsScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _groups.isEmpty
-              ? const EmptyState(icon: Icons.groups_outlined, title: 'No groups yet')
+              ? const EmptyState(
+                  icon: Icons.groups_outlined,
+                  title: 'No groups yet',
+                  description: 'Create a group to start a shared conversation.',
+                )
               : ListView.builder(
                   itemCount: _groups.length,
                   itemBuilder: (context, index) {
                     final group = _groups[index];
                     return ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                       leading: UserAvatar(
                         name: group['title'] as String?,
                         userId: group['id'] as String?,
@@ -61,8 +66,17 @@ class _GroupsScreenState extends ConsumerState<GroupsScreen> {
                         photoVersion: group['avatarVersion']?.toString(),
                         group: true,
                       ),
-                      title: Text(group['title'] as String? ?? 'Untitled group'),
-                      subtitle: Text(group['description'] as String? ?? 'Group conversation'),
+                      title: Text(
+                        group['title'] as String? ?? 'Untitled group',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Text(
+                        group['description'] as String? ?? 'Group conversation',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       onTap: () => context.push('/chats/${group['id']}'),
                     );
                   },
@@ -118,36 +132,40 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
     final me = ref.watch(authControllerProvider).user?.id;
     return Scaffold(
       appBar: AppBar(title: const Text('Create group')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
+      resizeToAvoidBottomInset: true,
+      body: SafeArea(
         child: Column(
           children: [
-            GestureDetector(
-              onTap: _pickPhoto,
-              child: CircleAvatar(
-                radius: 36,
-                backgroundColor: AppColors.sidebarAccent,
-                backgroundImage: _photo == null ? null : FileImage(_photo!),
-                child: _photo == null ? const Icon(Icons.camera_alt, color: AppColors.gold) : null,
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(controller: _title, decoration: const InputDecoration(labelText: 'Group name')),
-            const SizedBox(height: 12),
-            TextField(controller: _description, decoration: const InputDecoration(labelText: 'Description (optional)')),
-            const SizedBox(height: 16),
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text('Select members', style: TextStyle(fontWeight: FontWeight.w700)),
-            ),
             Expanded(
               child: ListView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
                 children: [
+                  Center(
+                    child: GestureDetector(
+                      onTap: _pickPhoto,
+                      child: CircleAvatar(
+                        radius: 36,
+                        backgroundColor: AppColors.sidebarAccent,
+                        backgroundImage: _photo == null ? null : FileImage(_photo!),
+                        child: _photo == null ? const Icon(Icons.camera_alt, color: AppColors.gold) : null,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(controller: _title, decoration: const InputDecoration(labelText: 'Group name')),
+                  const SizedBox(height: 12),
+                  TextField(controller: _description, decoration: const InputDecoration(labelText: 'Description (optional)')),
+                  const SizedBox(height: 16),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Select members', style: TextStyle(fontWeight: FontWeight.w700)),
+                  ),
                   for (final person in _people.where((row) => row['id'] != me))
                     CheckboxListTile(
                       value: _selected.contains(person['id']),
-                      title: Text(person['displayName'] as String? ?? ''),
+                      title: Text(person['displayName'] as String? ?? '', maxLines: 1, overflow: TextOverflow.ellipsis),
                       secondary: UserAvatar(person: person),
+                      contentPadding: EdgeInsets.zero,
                       onChanged: (value) {
                         setState(() {
                           if (value == true) {
@@ -161,7 +179,11 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                 ],
               ),
             ),
-            FilledButton(
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton(
               onPressed: _busy
                   ? null
                   : () async {
@@ -200,7 +222,9 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                       if (!context.mounted) return;
                       context.go('/chats/${created['id']}');
                     },
-              child: Text(_busy ? 'Creating…' : 'Create group'),
+                child: Text(_busy ? 'Creating…' : 'Create group'),
+              ),
+              ),
             ),
           ],
         ),
@@ -271,12 +295,15 @@ class _GroupInfoScreenState extends ConsumerState<GroupInfoScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Edit group info'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: title, decoration: const InputDecoration(labelText: 'Name')),
-            TextField(controller: description, decoration: const InputDecoration(labelText: 'Description')),
-          ],
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: title, decoration: const InputDecoration(labelText: 'Name')),
+              const SizedBox(height: 12),
+              TextField(controller: description, decoration: const InputDecoration(labelText: 'Description')),
+            ],
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
@@ -302,13 +329,15 @@ class _GroupInfoScreenState extends ConsumerState<GroupInfoScreen> {
       builder: (context) => StatefulBuilder(
         builder: (context, setLocal) => AlertDialog(
           title: const Text('Group permissions'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _PolicyTile('Edit group info', editInfo, (value) => setLocal(() => editInfo = value)),
-              _PolicyTile('Send messages', sendMessages, (value) => setLocal(() => sendMessages = value)),
-              _PolicyTile('Add members', addMembers, (value) => setLocal(() => addMembers = value)),
-            ],
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _PolicyTile('Edit group info', editInfo, (value) => setLocal(() => editInfo = value)),
+                _PolicyTile('Send messages', sendMessages, (value) => setLocal(() => sendMessages = value)),
+                _PolicyTile('Add members', addMembers, (value) => setLocal(() => addMembers = value)),
+              ],
+            ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),

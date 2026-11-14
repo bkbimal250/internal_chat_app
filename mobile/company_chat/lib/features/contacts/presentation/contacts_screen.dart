@@ -1,4 +1,5 @@
 import 'package:company_chat/app/providers.dart';
+import 'package:company_chat/core/theme/app_colors.dart';
 import 'package:company_chat/core/widgets/empty_state.dart';
 import 'package:company_chat/core/widgets/user_avatar.dart';
 import 'package:company_chat/features/auth/presentation/auth_controller.dart';
@@ -59,17 +60,28 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
           ),
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator())
+                ? const LoadingState(label: 'Loading people…')
                 : _people.isEmpty
-                    ? const EmptyState(icon: Icons.people_outline, title: 'No colleagues found')
-                    : ListView.builder(
+                    ? const EmptyState(
+                        icon: Icons.people_outline,
+                        title: 'No colleagues found',
+                        description: 'Try a different search.',
+                      )
+                    : ListView.separated(
                         itemCount: _people.length,
+                        separatorBuilder: (_, _) => const Divider(indent: 76, endIndent: 16),
                         itemBuilder: (context, index) {
                           final person = _people[index];
                           return ListTile(
-                            leading: UserAvatar(person: person),
-                            title: Text(person['displayName'] as String? ?? ''),
-                            subtitle: Text('@${person['username']}'),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                            leading: UserAvatar(person: person, size: AppSpacing.avatar),
+                            title: Text(
+                              person['displayName'] as String? ?? '',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            subtitle: Text('@${person['username']}', maxLines: 1, overflow: TextOverflow.ellipsis),
                             onTap: () async {
                               final chat = await ref.read(apiClientProvider).post<Map<String, dynamic>>(
                                 '/api/v1/conversations/direct',

@@ -49,17 +49,30 @@ function providerRejected(body) {
 export function classifySmsFailure(error) {
   const name = error?.name || '';
   const message = String(error?.message || '');
+  const tlsCode = String(error?.cause?.code || error?.code || '');
+  if (
+    /CERT|UNABLE_TO_VERIFY|SELF_SIGNED|TLS/i.test(tlsCode) ||
+    /certificate|tls/i.test(String(error?.cause?.message || ''))
+  ) {
+    return 'tls_error';
+  }
   if (name === 'TimeoutError' || name === 'AbortError' || /timeout|aborted/i.test(message)) {
     return 'timeout';
   }
   return 'network_error';
 }
 
-export function smsService(config, logger, fetchImpl = fetch) {
+function dispatchError(message, outcome, cause) {
+  const error = new Error(message, { cause });
+  error.smsFailure = outcome;
+  return error;
+}
+
+export function smsService(config, defaultLogger, fetchImpl = fetch) {
   const enabled = Boolean(config.smsUsername && config.smsApiKey && config.smsTemplateId);
   return {
     enabled,
-    async sendOtp(phoneE164, code) {
+    async sendOtp(phoneE164, code, logger = defaultLogger) {
       if (!enabled) {
         logger?.warn({ event: 'SMS_UNCONFIGURED' }, 'SMS provider credentials are missing');
         return { delivered: false, outcome: 'unconfigured' };
@@ -78,10 +91,18 @@ export function smsService(config, logger, fetchImpl = fetch) {
       } catch (error) {
         const outcome = classifySmsFailure(error);
         logger?.warn(
-          { event: outcome === 'timeout' ? 'SMS_TIMEOUT' : 'SMS_NETWORK_ERROR', outcome },
+          {
+            event:
+              outcome === 'timeout'
+                ? 'SMS_TIMEOUT'
+                : outcome === 'tls_error'
+                  ? 'SMS_TLS_ERROR'
+                  : 'SMS_NETWORK_ERROR',
+            outcome,
+          },
           'SMS provider request failed',
         );
-        throw new Error('SMS provider request failed', { cause: error });
+        throw dispatchError('SMS provider request failed', outcome, error);
       }
       let body;
       try {
@@ -98,7 +119,7 @@ export function smsService(config, logger, fetchImpl = fetch) {
           },
           'SMS provider rejected request',
         );
-        throw new Error('SMS provider rejected the request');
+        throw dispatchError('SMS provider rejected the request', 'provider_rejected');
       }
       logger?.info(
         {

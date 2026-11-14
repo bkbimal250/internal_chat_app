@@ -136,14 +136,17 @@ export function otpService(app, config) {
     return true;
   };
 
-  const dispatchSms = async ({ phoneE164, code, challenge, purpose }) => {
-    app.log.info({ event: 'OTP_REQUEST_ACCEPTED', purpose }, 'OTP request accepted');
+  const dispatchSms = async ({ phoneE164, code, challenge, purpose, logger = app.log }) => {
+    logger.info({ event: 'OTP_REQUEST_ACCEPTED', purpose }, 'OTP request accepted');
     try {
-      await sms.sendOtp(phoneE164, code);
+      await sms.sendOtp(phoneE164, code, logger);
       rememberTestCode(purpose, phoneE164, challenge, code);
-    } catch {
+    } catch (error) {
       await db.delete(otpChallenges).where(eq(otpChallenges.id, challenge.id));
-      app.log.warn({ event: 'OTP_DISPATCH_FAILED', purpose }, 'OTP SMS dispatch failed');
+      logger.warn(
+        { event: 'OTP_DISPATCH_FAILED', purpose, outcome: error?.smsFailure || 'unknown' },
+        'OTP SMS dispatch failed',
+      );
       return false;
     }
     return true;
@@ -214,7 +217,7 @@ export function otpService(app, config) {
       return user;
     },
 
-    async enrollRequest(userId, phone) {
+    async enrollRequest(userId, phone, logger = app.log) {
       const phoneE164 = normalizePhone(phone);
       const [holder] = await db
         .select({ id: users.id, phoneVerifiedAt: users.phoneVerifiedAt })
@@ -242,7 +245,7 @@ export function otpService(app, config) {
         userId,
         code,
       });
-      const delivered = await dispatchSms({ phoneE164, code, challenge, purpose: 'enroll' });
+      const delivered = await dispatchSms({ phoneE164, code, challenge, purpose: 'enroll', logger });
       if (!delivered && config.nodeEnv !== 'test') {
         throw new AppError('Unable to send a verification code right now', 503, 'SMS_UNAVAILABLE');
       }

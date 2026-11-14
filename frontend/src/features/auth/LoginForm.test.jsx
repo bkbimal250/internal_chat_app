@@ -100,6 +100,23 @@ describe('LoginForm', () => {
     })
   })
 
+  it('keeps the phone form available and explains an unavailable SMS provider', async () => {
+    const user = userEvent.setup()
+    requestOtp.mockRejectedValue(
+      new ApiError({ code: 'SMS_UNAVAILABLE', status: 503, message: 'Internal server error' }),
+    )
+    renderLogin()
+    await user.type(screen.getByTestId('login-phone'), '9876543210')
+    await user.click(screen.getByTestId('login-otp-send'))
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Unable to send verification code right now. Please try again later or use another sign-in method.',
+      )
+    })
+    expect(screen.getByTestId('login-phone')).toHaveValue('9876543210')
+    expect(screen.getByTestId('login-otp-send')).toBeEnabled()
+  })
+
   it('signs in with username and password through the existing API', async () => {
     const user = userEvent.setup()
     login.mockResolvedValue({ user: { role: 'user' } })

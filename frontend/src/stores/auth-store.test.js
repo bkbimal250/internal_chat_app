@@ -155,4 +155,16 @@ describe('auth session restoration', () => {
     expect(useAuthStore.getState().status).toBe('unauthenticated')
     expect(getAccessToken()).toBeNull()
   })
+
+  it('uses the public login OTP endpoint, never the authenticated phone-change endpoint', async () => {
+    apiClient.defaults.adapter = async (config) => {
+      expect(config.url).toBe('/api/v1/auth/otp/request')
+      expect(JSON.parse(config.data)).toEqual({ phone: '+919876543210' })
+      return jsonResponse(config, { accepted: true, retryAfterSeconds: 60, expiresInSeconds: 60 })
+    }
+
+    await expect(useAuthStore.getState().requestOtp('+919876543210')).resolves.toMatchObject({
+      accepted: true,
+    })
+  })
 })
